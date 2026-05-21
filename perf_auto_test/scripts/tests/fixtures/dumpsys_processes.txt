@@ -1,0 +1,8 @@
+ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)
+  All known processes:
+  *APP* UID 10123 ProcessRecord{abc123 1234:com.example.app/u0a123}
+  *APP* UID 10123 ProcessRecord{def456 1235:com.example.app:remote/u0a123}
+  *APP* UID 10001 ProcessRecord{ghi789 5678:com.android.systemui/u0a1}
+
+  Proc # 0: prcp F/T/SVC trm: 0 1234:com.example.app/u0a123 (started-services)
+  Proc # 1: prcp F/T/SVC trm: 0 1235:com.example.app:remote/u0a123 (started-services)

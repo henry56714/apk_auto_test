@@ -1,0 +1,12 @@
+PID NAME
+1 init
+2 kthreadd
+234 logd
+876 zygote64
+1234 com.example.app
+1235 com.example.app:remote
+1500 com.example.app:push
+5678 com.android.systemui
+9012 com.android.chrome
+9013 com.android.chrome:sandboxed_process0
+9014 com.android.chrome:sandboxed_process1

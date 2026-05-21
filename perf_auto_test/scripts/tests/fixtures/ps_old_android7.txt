@@ -1,0 +1,7 @@
+USER     PID   PPID  VSIZE  RSS     WCHAN    PC         NAME
+root      1     0     8068   1640   SyS_epoll_ 00000000 S /init
+root      2     0     0      0      kthreadd  00000000 S kthreadd
+system    234   1     12345  6789   futex_wait 00000000 S logd
+u0_a123   1234  876   1234567 87654 SyS_epoll_ 00000000 S com.example.app
+u0_a123   1235  876   1234500 87000 SyS_epoll_ 00000000 S com.example.app:remote
+system    5678  876   2000000 90000 SyS_epoll_ 00000000 S com.android.systemui

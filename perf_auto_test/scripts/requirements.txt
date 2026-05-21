@@ -1,0 +1,4 @@
+PyYAML>=6.0
+pandas>=2.0
+plotly>=5.18
+jsonschema>=4.20

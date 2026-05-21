@@ -1,0 +1,12 @@
+Applications Memory Usage (in Kilobytes):
+Uptime: 1000 Realtime: 1000
+
+** MEMINFO in pid 7777 [com.legacy.app] **
+                   Pss  Private  Private    Heap     Heap     Heap
+                 Total    Dirty    Clean    Size    Alloc     Free
+                ------   ------   ------   ------   ------   ------
+  Native Heap     5000     5000        0     8000     5000     3000
+  Dalvik Heap     2000     2000        0     4000     2000     2000
+        Stack       50       50        0
+     .so mmap     1500      100        0
+        TOTAL     8550     7150        0    12000     7000     5000

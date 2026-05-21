@@ -1,0 +1,99 @@
+Threads: 26 total,   0 running,  26 sleeping,   0 stopped,   0 zombie
+  Mem:  2022068K total,  1869584K used,   152484K free,     4968K buffers
+ Swap:  1516544K total,   468992K used,  1047552K free,   885768K cached
+400%cpu   4%user   0%nice  16%sys 368%idle   0%iow  12%irq   0%sirq   0%host
+  TID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ THREAD          PROCESS
+ 6389 u0_a215      10 -10  16G 175M 114M S  8.0   8.8   0:28.05 RenderThread    com.example.testapp
+ 6448 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.43 binder:6370_5   com.example.testapp
+ 6430 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.00 WifiManagerThre com.example.testapp
+ 6408 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.00 InteractionJank com.example.testapp
+ 6407 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.01 InsetsAnimation com.example.testapp
+ 6403 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.00 binder:6370_4   com.example.testapp
+ 6401 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.02 binder:6370_3   com.example.testapp
+ 6398 u0_a215      18  -2  16G 175M 114M S  0.0   8.8   0:00.00 hwuiTask1       com.example.testapp
+ 6397 u0_a215      18  -2  16G 175M 114M S  0.0   8.8   0:00.00 hwuiTask0       com.example.testapp
+ 6395 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.00 SurfaceSyncGrou com.example.testapp
+ 6385 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.04 ExampleApp-Net- com.example.testapp
+ 6386 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.06 ExampleApp-Biz- com.example.testapp
+ 6387 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.03 ExampleApp-Watc com.example.testapp
+ 6384 u0_a215      29   9  16G 175M 114M S  0.0   8.8   0:00.01 Profile Saver   com.example.testapp
+ 6382 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.37 binder:6370_3   com.example.testapp
+ 6372 u0_a215       0 -20  16G 175M 114M S  0.0   8.8   0:00.00 Signal Catcher  com.example.testapp
+ 6381 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.61 binder:6370_2   com.example.testapp
+ 6380 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.03 binder:6370_1   com.example.testapp
+ 6379 u0_a215      24   4  16G 175M 114M S  0.0   8.8   0:00.00 FinalizerWatchd com.example.testapp
+ 6377 u0_a215      24   4  16G 175M 114M S  0.0   8.8   0:00.00 ReferenceQueueD com.example.testapp
+ 6376 u0_a215      24   4  16G 175M 114M S  0.0   8.8   0:00.01 HeapTaskDaemon  com.example.testapp
+ 6375 u0_a215      29   9  16G 175M 114M S  0.0   8.8   0:00.76 Jit thread pool com.example.testapp
+ 6374 u0_a215       0 -20  16G 175M 114M S  0.0   8.8   0:00.00 ADB-JDWP Connec com.example.testapp
+ 6378 u0_a215      24   4  16G 175M 114M S  0.0   8.8   0:00.00 FinalizerDaemon com.example.testapp
+ 6373 u0_a215       0 -20  16G 175M 114M S  0.0   8.8   0:00.00 perfetto_hprof_ com.example.testapp
+ 6370 u0_a215      10 -10  16G 175M 114M S  0.0   8.8   0:10.81 example.testapp com.example.testapp
+
+
+
+Threads: 26 total,   0 running,  26 sleeping,   0 stopped,   0 zombie
+  Mem:  2022068K total,  1872860K used,   149208K free,     5172K buffers
+ Swap:  1516544K total,   468224K used,  1048320K free,   885772K cached
+400%cpu  16%user   0%nice  19%sys 348%idle   0%iow  16%irq   1%sirq   0%host
+  TID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ THREAD          PROCESS
+ 6389 u0_a215      10 -10  16G 175M 114M S  8.0   8.8   0:28.07 RenderThread    com.example.testapp
+ 6370 u0_a215      10 -10  16G 175M 114M S  3.0   8.8   0:10.81 example.testapp com.example.testapp
+ 6386 u0_a215      20   0  16G 175M 114M S  2.0   8.8   0:00.06 ExampleApp-Biz- com.example.testapp
+ 6448 u0_a215      20   0  16G 175M 114M S  1.0   8.8   0:00.43 binder:6370_5   com.example.testapp
+ 6385 u0_a215      20   0  16G 175M 114M S  1.0   8.8   0:00.04 ExampleApp-Net- com.example.testapp
+ 6430 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.00 WifiManagerThre com.example.testapp
+ 6407 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.01 InsetsAnimation com.example.testapp
+ 6408 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.00 InteractionJank com.example.testapp
+ 6403 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.00 binder:6370_4   com.example.testapp
+ 6401 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.02 binder:6370_3   com.example.testapp
+ 6397 u0_a215      18  -2  16G 175M 114M S  0.0   8.8   0:00.00 hwuiTask0       com.example.testapp
+ 6398 u0_a215      18  -2  16G 175M 114M S  0.0   8.8   0:00.00 hwuiTask1       com.example.testapp
+ 6395 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.00 SurfaceSyncGrou com.example.testapp
+ 6387 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.03 ExampleApp-Watc com.example.testapp
+ 6384 u0_a215      29   9  16G 175M 114M S  0.0   8.8   0:00.01 Profile Saver   com.example.testapp
+ 6382 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.37 binder:6370_3   com.example.testapp
+ 6372 u0_a215       0 -20  16G 175M 114M S  0.0   8.8   0:00.00 Signal Catcher  com.example.testapp
+ 6376 u0_a215      24   4  16G 175M 114M S  0.0   8.8   0:00.01 HeapTaskDaemon  com.example.testapp
+ 6377 u0_a215      24   4  16G 175M 114M S  0.0   8.8   0:00.00 ReferenceQueueD com.example.testapp
+ 6378 u0_a215      24   4  16G 175M 114M S  0.0   8.8   0:00.00 FinalizerDaemon com.example.testapp
+ 6379 u0_a215      24   4  16G 175M 114M S  0.0   8.8   0:00.00 FinalizerWatchd com.example.testapp
+ 6380 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.03 binder:6370_1   com.example.testapp
+ 6381 u0_a215      20   0  16G 175M 114M S  0.0   8.8   0:00.61 binder:6370_2   com.example.testapp
+ 6374 u0_a215       0 -20  16G 175M 114M S  0.0   8.8   0:00.00 ADB-JDWP Connec com.example.testapp
+ 6373 u0_a215       0 -20  16G 175M 114M S  0.0   8.8   0:00.00 perfetto_hprof_ com.example.testapp
+ 6375 u0_a215      29   9  16G 175M 114M S  0.0   8.8   0:00.76 Jit thread pool com.example.testapp
+
+
+
+Threads: 26 total,   0 running,  26 sleeping,   0 stopped,   0 zombie
+  Mem:  2022068K total,  1873112K used,   148956K free,     5172K buffers
+ Swap:  1516544K total,   468224K used,  1048320K free,   885772K cached
+400%cpu   2%user   0%nice  10%sys 378%idle   0%iow  10%irq   0%sirq   0%host
+  TID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ THREAD          PROCESS
+ 6389 u0_a215      10 -10  16G 176M 114M S  2.0   8.9   0:28.15 RenderThread    com.example.testapp
+ 6448 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.44 binder:6370_5   com.example.testapp
+ 6430 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.00 WifiManagerThre com.example.testapp
+ 6408 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.00 InteractionJank com.example.testapp
+ 6407 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.01 InsetsAnimation com.example.testapp
+ 6403 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.00 binder:6370_4   com.example.testapp
+ 6401 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.02 binder:6370_3   com.example.testapp
+ 6398 u0_a215      18  -2  16G 176M 114M S  0.0   8.9   0:00.00 hwuiTask1       com.example.testapp
+ 6397 u0_a215      18  -2  16G 176M 114M S  0.0   8.9   0:00.00 hwuiTask0       com.example.testapp
+ 6395 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.00 SurfaceSyncGrou com.example.testapp
+ 6385 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.05 ExampleApp-Net- com.example.testapp
+ 6386 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.08 ExampleApp-Biz- com.example.testapp
+ 6387 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.03 ExampleApp-Watc com.example.testapp
+ 6384 u0_a215      29   9  16G 176M 114M S  0.0   8.9   0:00.01 Profile Saver   com.example.testapp
+ 6382 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.37 binder:6370_3   com.example.testapp
+ 6372 u0_a215       0 -20  16G 176M 114M S  0.0   8.9   0:00.00 Signal Catcher  com.example.testapp
+ 6381 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.61 binder:6370_2   com.example.testapp
+ 6380 u0_a215      20   0  16G 176M 114M S  0.0   8.9   0:00.03 binder:6370_1   com.example.testapp
+ 6379 u0_a215      24   4  16G 176M 114M S  0.0   8.9   0:00.00 FinalizerWatchd com.example.testapp
+ 6377 u0_a215      24   4  16G 176M 114M S  0.0   8.9   0:00.00 ReferenceQueueD com.example.testapp
+ 6376 u0_a215      24   4  16G 176M 114M S  0.0   8.9   0:00.01 HeapTaskDaemon  com.example.testapp
+ 6375 u0_a215      29   9  16G 176M 114M S  0.0   8.9   0:00.76 Jit thread pool com.example.testapp
+ 6374 u0_a215       0 -20  16G 176M 114M S  0.0   8.9   0:00.00 ADB-JDWP Connec com.example.testapp
+ 6378 u0_a215      24   4  16G 176M 114M S  0.0   8.9   0:00.00 FinalizerDaemon com.example.testapp
+ 6373 u0_a215       0 -20  16G 176M 114M S  0.0   8.9   0:00.00 perfetto_hprof_ com.example.testapp
+ 6370 u0_a215      10 -10  16G 176M 114M S  0.0   8.9   0:10.84 example.testapp com.example.testapp

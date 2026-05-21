@@ -1,0 +1,30 @@
+Applications Memory Usage (in Kilobytes):
+Uptime: 555555 Realtime: 555555
+
+** MEMINFO in pid 8888 [com.example.app] **
+                   Pss  Private  Private    Heap     Heap     Heap
+                 Total    Dirty    Clean    Size    Alloc     Free
+                ------   ------   ------   ------   ------   ------
+  Native Heap     8000     8000        0    12000     8000     4000
+  Dalvik Heap     3000     3000        0     6000     3000     3000
+ Dalvik Other      150      150        0
+        Stack      100      100        0
+     .so mmap     4000      100      200
+    .apk mmap     6000        0     5000
+    .dex mmap     2000      100     1800
+    .art mmap     1500     1200        0
+   EGL mtrack    10000    10000        0
+        TOTAL    34750    22650     7000    18000    11000     7000
+
+ App Summary
+                       Pss(KB)
+                        ------
+           Java Heap:     4500
+         Native Heap:     8000
+                Code:    13100
+               Stack:      100
+            Graphics:    10000
+       Private Other:      300
+              System:      750
+
+                TOTAL:    34750

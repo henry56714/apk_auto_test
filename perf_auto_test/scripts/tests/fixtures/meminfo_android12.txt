@@ -1,0 +1,38 @@
+Applications Memory Usage (in Kilobytes):
+Uptime: 1234567 Realtime: 1234567
+
+** MEMINFO in pid 12345 [com.example.app] **
+                   Pss  Private  Private  SwapPss     Rss     Heap     Heap     Heap
+                 Total    Dirty    Clean    Dirty   Total     Size    Alloc     Free
+                ------   ------   ------   ------   ------   ------   ------   ------
+  Native Heap    12345    12340        0        0    20480    20480    12340     8140
+  Dalvik Heap     5678     5670        0        0     8192     8192     5678     2514
+ Dalvik Other      234      230        0        0      512
+        Stack      128      128        0        0      128
+       Ashmem       16        0        0        0       16
+    Other dev       32        0       32        0       64
+     .so mmap     8901      234      234        0    50000
+    .jar mmap      234        0        0        0     1024
+    .apk mmap    12345        0    12000        0    50000
+    .ttf mmap      512        0      300        0      800
+    .dex mmap     4567      100     4000        0    20000
+    .oat mmap      234        0      234        0     1500
+    .art mmap     3456     3000        0        0     8000
+   Other mmap      678      100        0        0     1000
+   EGL mtrack    20000    20000        0        0    20000
+    GL mtrack    15000    15000        0        0    15000
+      Unknown     1234     1234        0        0     1234
+        TOTAL    85594    61236    16800        0   200958    28672    18018    10654
+
+ App Summary
+                       Pss(KB)                        Rss(KB)
+                        ------                         ------
+           Java Heap:     9134                          16192
+         Native Heap:    12340                          20480
+                Code:    24234                          73724
+               Stack:      128                            128
+            Graphics:    35000                          35000
+       Private Other:     2002
+              System:     2856
+
+               TOTAL PSS:    85594            TOTAL RSS:   200958      TOTAL SWAP PSS:        0

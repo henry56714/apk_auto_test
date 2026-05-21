@@ -1,0 +1,10 @@
+package: com.example.app
+device: null                      # 空 = 取 `adb devices` 唯一在线设备；多台则必填 --device
+
+thresholds:
+  cpu:
+    percent: 10                   # 单核归一化（与 top 一致；4 核全满 = 400%）
+    sustain_sec: 60               # 必须持续超过 sustain 才触发
+  mem:
+    pss_mb: 207
+    sustain_sec: 120

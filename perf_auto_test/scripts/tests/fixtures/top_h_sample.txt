@@ -1,0 +1,24 @@
+Tasks: 12 total,   0 running,  12 sleeping,   0 stopped,   0 zombie
+  Mem:  3854612K total,  3520576K used,   334036K free,    20928K buffers
+  Swap:  1048572K total,        0K used,  1048572K free,  1100328K cached
+800%cpu  120%user   5%nice  60%sys 615%idle   0%iow   0%irq   0%sirq   0%host
+
+    PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+  12345 u0_a123      20   0 1.2G  87M  56M S  0.0   2.2   0:01.23 com.example.app
+  12350 u0_a123      20   0 1.2G  87M  56M S 45.2   2.2   0:05.12 GLThread-21
+  12351 u0_a123      20   0 1.2G  87M  56M S 30.5   2.2   0:03.45 RenderThread
+  12352 u0_a123      20   0 1.2G  87M  56M S 10.2   2.2   0:01.10 RxComputationT
+  12353 u0_a123      20   0 1.2G  87M  56M S  5.1   2.2   0:00.50 OkHttp_Conn
+  12354 u0_a123      20   0 1.2G  87M  56M S  2.0   2.2   0:00.20 finalizer
+  12355 u0_a123      20   0 1.2G  87M  56M S  0.5   2.2   0:00.10 ConnectivityTh
+
+Tasks: 12 total,   0 running,  12 sleeping,   0 stopped,   0 zombie
+  Mem:  3854612K total,  3520576K used,   334036K free,    20928K buffers
+800%cpu  130%user   6%nice  64%sys 600%idle   0%iow   0%irq   0%sirq   0%host
+
+    PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+  12345 u0_a123      20   0 1.2G  87M  56M S  0.0   2.2   0:01.23 com.example.app
+  12350 u0_a123      20   0 1.2G  87M  56M S 52.7   2.2   0:05.65 GLThread-21
+  12351 u0_a123      20   0 1.2G  87M  56M S 28.4   2.2   0:03.92 RenderThread
+  12352 u0_a123      20   0 1.2G  87M  56M S 12.1   2.2   0:01.21 RxComputationT
+  12353 u0_a123      20   0 1.2G  87M  56M S  3.0   2.2   0:00.53 OkHttp_Conn

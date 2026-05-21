@@ -1,0 +1,30 @@
+# 激进阈值：5 分钟冒烟内基本必触发，用于端到端验收（不要用于生产长跑）。
+
+discovery:
+  wait_timeout_sec: 30
+  rescan_interval_sec: 3
+
+sampling:
+  cpu_interval_sec: 1
+  mem_interval_sec: 2
+
+thresholds:
+  cpu:
+    percent: 5                    # 5% 几乎稳定触发
+    sustain_sec: 3
+    cooldown_sec: 30
+  mem:
+    pss_mb: 20                    # 20MB 大多数 App 起步就超
+    sustain_sec: 5
+    cooldown_sec: 30
+
+dumps:
+  enable_heap: true
+  max_heap_dumps: 5               # 限制硬盘占用
+  max_thread_dumps: 10
+
+output:
+  emit_html: true
+  emit_markdown: true
+  emit_junit: true
+  status_interval_sec: 5
