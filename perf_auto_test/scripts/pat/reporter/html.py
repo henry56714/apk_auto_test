@@ -531,14 +531,11 @@ def _build_header(result: dict) -> str:
     dur_fmt = _fmt_hms(duration_sec)
 
     total_incidents = len(result.get("incidents", []))
-    fail_on = "CI gate passed" if exit_code == 0 else "CI gate failed"
-    fail_on_zh = "CI 门控通过" if exit_code == 0 else "CI 门控触发"
 
     reason_zh_map = {
         "duration_elapsed": "正常结束 · 时长跑完",
         "setup_failed": "启动失败",
         "wait_timeout": "等待进程超时",
-        "fail_on_triggered": "CI 门控触发",
         "exception": "异常终止",
     }
     reason_zh = reason_zh_map.get(exit_reason, exit_reason)
@@ -563,8 +560,8 @@ def _build_header(result: dict) -> str:
         <span class="en">{_e(exit_reason)}</span>
       </span>
       <span class="micro">
-        <span class="zh">exit_code = {exit_code} · {total_incidents} 个告警 · {_e(fail_on_zh)}</span>
-        <span class="en">exit_code = {exit_code} · {total_incidents} incident(s) · {_e(fail_on)}</span>
+        <span class="zh">exit_code = {exit_code} · {total_incidents} 个告警</span>
+        <span class="en">exit_code = {exit_code} · {total_incidents} incident(s)</span>
       </span>
     </div>
   </header>"""

@@ -10,8 +10,8 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-from perf_auto_test.reporter import result as result_mod
-from perf_auto_test.storage import (
+from pat.reporter import result as result_mod
+from pat.storage import (
     CPU_COLUMNS,
     CPU_SCHEMA_TAG,
     LIFECYCLE_COLUMNS,

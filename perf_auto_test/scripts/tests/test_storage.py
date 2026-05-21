@@ -9,7 +9,7 @@ from typing import Iterator, List
 
 import pytest
 
-from perf_auto_test.storage import (
+from pat.storage import (
     CPU_COLUMNS,
     CPU_SCHEMA_TAG,
     LIFECYCLE_COLUMNS,

@@ -15,21 +15,20 @@ argument-hint: <package> [duration] [--device serial] [--config path] [--output 
 |---|---|---|
 | `--package` | 目标 APK 包名（**必填**）| — |
 | `--duration` | 采集时长，如 `30s`、`5m`、`1h` | `5m` |
-| `--output` | 报告输出目录 | `./reports/<包名末段>_<YYYYMMDD_HHMMSS>` |
+| `--output` | 报告输出目录（不填时自动生成） | `./reports/<包名末段>_<YYYYMMDD_HHMMSS>` |
 | `--device` | ADB serial（多设备时必填）| 自动取唯一在线设备 |
 | `--config` | YAML 配置路径（覆盖阈值等）| — |
 | `--cpu-threshold-percent` | CPU% 报警阈值（单核归一化，4核全满=400%）| 80 |
 | `--mem-threshold-pss-mb` | 内存 PSS MB 报警阈值 | 500 |
-| `--fail-on` | CI 失败条件，如 `"alerts>0"` | — |
 
-> 采样间隔、cooldown、dump 上限、输出格式等进阶参数均在代码中有默认值，需要时可通过 `--config` YAML 覆盖，见 `${CLAUDE_SKILL_DIR}/examples/config.example.yaml`。
+> 采样间隔、cooldown、dump 上限、输出格式等进阶参数均在代码中有默认值，需要时可通过 `--config` YAML 覆盖，见 `${CLAUDE_SKILL_DIR}/scripts/config.example.yaml`。
 
 **简写识别**：`/perf-auto-test com.example.app 5m` → `--package com.example.app --duration 5m`
 
 ## 步骤 1：环境检查
 
 ```bash
-python -m perf_auto_test --help
+python -m pat --help
 ```
 
 若报 ModuleNotFoundError，安装依赖后重试：
@@ -51,8 +50,10 @@ pip install -e ${CLAUDE_SKILL_DIR}/scripts
 
 ## 步骤 3：执行采集
 
+在 `perf_auto_test/scripts/` 目录下执行：
+
 ```bash
-python -m perf_auto_test \
+python -m pat \
   --package <package> \
   --output <output_dir> \
   --duration <duration> \
@@ -110,19 +111,17 @@ open <output_dir>/report.html
 
 ## 命令行直接调用参考
 
+以下命令在 `perf_auto_test/scripts/` 目录下执行。
+
 ```bash
 # 基本用法
-python -m perf_auto_test --package com.example.app --duration 5m --output ./reports/run01
+python -m pat --package com.example.app --duration 5m --output ./reports/run01
 
 # 使用配置文件（推荐，阈值在 YAML 中管理）
-python -m perf_auto_test --config examples/config.example.yaml --package com.example.app --output ./reports/r1
-
-# CI 模式
-python -m perf_auto_test --package com.example.app --duration 30m \
-  --output ./reports/ci --fail-on "alerts>0" --emit-junit --no-html
+python -m pat --config config.example.yaml --package com.example.app --output ./reports/r1
 
 # 冒烟（30秒验证连通性）
-python -m perf_auto_test --package com.android.settings --duration 30s --output ./reports/smoke
+python -m pat --package com.android.settings --duration 30s --output ./reports/smoke
 ```
 
-完整参数：`python -m perf_auto_test --help`
+完整参数：`python -m pat --help`

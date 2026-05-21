@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 
-from perf_auto_test.collectors.cpu import (
+from pat.collectors.cpu import (
     CpuPercentCalculator,
     CpuSample,
     parse_combined,

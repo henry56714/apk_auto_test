@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from perf_auto_test import device
-from perf_auto_test.adb import AdbResult
-from perf_auto_test.device import DeviceSetupError
+from pat import device
+from pat.adb import AdbResult
+from pat.device import DeviceSetupError
 
 
 def _mk_result(stdout: str = "", rc: int = 0, stderr: str = "") -> AdbResult:

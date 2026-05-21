@@ -9,12 +9,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from perf_auto_test.adb import AdbResult
-from perf_auto_test.alerting import AlertEvent
-from perf_auto_test.discovery import Process
-from perf_auto_test.dumpers import heap as heap_dumper
-from perf_auto_test.dumpers import thread_cpu as thread_cpu_dumper
-from perf_auto_test.dumpers.thread_cpu import parse_top_h
+from pat.adb import AdbResult
+from pat.alerting import AlertEvent
+from pat.discovery import Process
+from pat.dumpers import heap as heap_dumper
+from pat.dumpers import thread_cpu as thread_cpu_dumper
+from pat.dumpers.thread_cpu import parse_top_h
 
 FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 

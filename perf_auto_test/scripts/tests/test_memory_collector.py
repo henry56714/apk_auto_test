@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from perf_auto_test.adb import AdbResult, AdbTimeout
-from perf_auto_test.collectors.memory import MemSample, parse_meminfo, sample
+from pat.adb import AdbResult, AdbTimeout
+from pat.collectors.memory import MemSample, parse_meminfo, sample
 
 FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 

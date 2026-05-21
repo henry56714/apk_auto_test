@@ -26,5 +26,4 @@ dumps:
 output:
   emit_html: true
   emit_markdown: true
-  emit_junit: true
   status_interval_sec: 5

@@ -4,14 +4,14 @@
 
 > Automated long-running performance monitoring for any Android APK. No app modification, no root required — pure Python + adb.
 
-**Use cases**: Pre-release performance regression / stability soak testing / CI pipeline integration / real-time monitoring during load testing
+**Use cases**: Pre-release performance regression / stability soak testing / real-time monitoring during load testing
 
 ---
 
 ## What it does
 
 ```bash
-python -m perf_auto_test --package com.example.app --duration 30m --output ./reports/run1
+python -m pat --package com.example.app --duration 30m --output ./reports/run1
 ```
 
 One command handles everything:
@@ -32,7 +32,6 @@ One command handles everything:
 | **Long-run stable** | Hourly CSV rotation, adb retry with backoff, handles 1 h–24 h runs |
 | **Spike-resistant** | Alerts only fire after threshold is held for `sustain_sec`, ignoring single-sample spikes |
 | **Dual mode** | Standalone CLI or Python library embedded in a larger test framework |
-| **CI-ready** | `--fail-on "alerts>=1"` gates the pipeline with a non-zero exit code; JUnit XML output supported |
 | **AI-ready** | Every incident includes a `.txt` (human) and `.json` (machine); `report.json` is the single source of truth |
 
 ---
@@ -52,7 +51,7 @@ One command handles everything:
 pip install -e perf_auto_test/scripts/
 
 # 5-minute smoke run
-python -m perf_auto_test \
+python -m pat \
   --package com.example.app \
   --duration 5m \
   --output ./reports/smoke
@@ -64,7 +63,7 @@ open ./reports/smoke/report.html
 **Multiple devices / custom thresholds**
 
 ```bash
-python -m perf_auto_test \
+python -m pat \
   --package com.example.app \
   --duration 30m \
   --device emulator-5554 \
@@ -73,26 +72,13 @@ python -m perf_auto_test \
   --output ./reports/run1
 ```
 
-**CI pipeline**
-
-```bash
-python -m perf_auto_test \
-  --package com.example.app \
-  --duration 30m \
-  --output ./reports/ci \
-  --fail-on "alerts>=1,restarts>=2" \
-  --emit-junit \
-  --no-html
-# exit 0 = pass  |  exit 1 = fail-on triggered
-```
-
 ---
 
 ## Report output
 
 ```
 reports/run1/
-├── report.json         ← authoritative result, read by AI / CI
+├── report.json         ← authoritative result, read by AI
 ├── report.html         ← Plotly interactive charts (CPU / Mem / lifecycle, shared x-axis)
 ├── *.csv               ← raw time-series, hourly rotation
 └── incidents/
@@ -117,4 +103,4 @@ Skill definition: [`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md)
 
 ## Full documentation
 
-Complete CLI reference, YAML config, Python library API, CI exit codes: [`perf_auto_test/README.md`](perf_auto_test/README.md)
+Complete CLI reference, YAML config, Python library API: [`perf_auto_test/README.md`](perf_auto_test/README.md)

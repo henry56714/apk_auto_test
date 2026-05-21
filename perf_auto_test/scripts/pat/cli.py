@@ -1,5 +1,5 @@
 """CLI entry-point. A thin shell around the PerfTest library API that adds
-duration timing, exit-code translation, and --fail-on gating for CI use."""
+duration timing and exit-code translation."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ import logging
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from .api import PerfConfig, PerfTest
 from .device import DeviceSetupError
@@ -21,7 +22,6 @@ log = logging.getLogger("perf_auto_test")
 # Exit codes
 # ---------------------------------------------------------------------------
 EXIT_OK = 0
-EXIT_FAIL_ON = 1
 EXIT_SETUP = 2
 EXIT_WAIT_TIMEOUT = 3
 EXIT_PROCESS_DIED = 4
@@ -40,60 +40,17 @@ def _parse_duration(s: str) -> float:
     return n * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
 
 
+def _default_output(package: str) -> str:
+    slug = package.rsplit(".", 1)[-1]
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"./reports/{slug}_{ts}"
+
+
 def _parse_csv_list(s: Optional[str]) -> Optional[List[str]]:
     if s is None:
         return None
     out = [x.strip() for x in s.split(",") if x.strip()]
     return out or None
-
-
-# ---------------------------------------------------------------------------
-# --fail-on evaluation
-# ---------------------------------------------------------------------------
-_FAIL_ON_RE = re.compile(r"^\s*(\w+)\s*(>=|<=|>|<|==)\s*(\d+)\s*$")
-_FAIL_ON_OPS: Dict[str, Callable[[int, int], bool]] = {
-    ">=": lambda a, b: a >= b,
-    "<=": lambda a, b: a <= b,
-    ">":  lambda a, b: a > b,
-    "<":  lambda a, b: a < b,
-    "==": lambda a, b: a == b,
-}
-_FAIL_ON_VALID_KEYS = {"alerts", "cpu_alerts", "mem_alerts", "restarts"}
-
-
-def _result_counters(result: Dict) -> Dict[str, int]:
-    cpu = sum(p["alerts"]["cpu"] for p in result.get("processes", []))
-    mem = sum(p["alerts"]["mem"] for p in result.get("processes", []))
-    restarts = sum(p.get("restart_count", 0) for p in result.get("processes", []))
-    return {"alerts": cpu + mem, "cpu_alerts": cpu, "mem_alerts": mem, "restarts": restarts}
-
-
-def evaluate_fail_on(spec: Optional[str], result: Dict) -> Optional[str]:
-    """Return the first matching condition's description if any expression in
-    `spec` is true; None otherwise. Multiple expressions are comma-separated
-    and combined with OR (any single condition can trigger failure)."""
-    if not spec:
-        return None
-    counters = _result_counters(result)
-    for raw in spec.split(","):
-        expr = raw.strip()
-        if not expr:
-            continue
-        m = _FAIL_ON_RE.match(expr)
-        if not m:
-            raise ValueError(
-                f"bad --fail-on expression: {expr!r}; "
-                f"expected <counter><op><int> (e.g. alerts>=1)"
-            )
-        key, op, n_str = m.groups()
-        if key not in _FAIL_ON_VALID_KEYS:
-            raise ValueError(
-                f"unknown counter {key!r}; valid: {sorted(_FAIL_ON_VALID_KEYS)}"
-            )
-        actual = counters[key]
-        if _FAIL_ON_OPS[op](actual, int(n_str)):
-            return f"{key}={actual} {op} {n_str}"
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +103,8 @@ def _flatten_yaml(data: Dict[str, Any]) -> Dict[str, Any]:
     by PerfConfig if invalid)."""
     out: Dict[str, Any] = {}
 
-    # Top-level scalars (package, device, on_process_died, fail_on)
-    for k in ("package", "device", "fail_on"):
+    # Top-level scalars (package, device)
+    for k in ("package", "device"):
         if k in data:
             out[k] = data[k]
 
@@ -192,8 +149,6 @@ def _flatten_yaml(data: Dict[str, Any]) -> Dict[str, Any]:
     output = data.get("output", {}) or {}
     if "emit_html" in output:
         out["emit_html"] = output["emit_html"]
-    if "emit_junit" in output:
-        out["emit_junit"] = output["emit_junit"]
     if "status_interval_sec" in output:
         out["status_interval_sec"] = output["status_interval_sec"]
 
@@ -223,7 +178,6 @@ def build_config(args: argparse.Namespace, yaml_path: Optional[Path]) -> PerfCon
         "mem_cooldown_sec": args.mem_cooldown_sec,
         "enable_heap_dumps": not args.no_heap_dumps,
         "emit_html": not args.no_html,
-        "emit_junit": args.emit_junit,
         "status_interval_sec": args.status_interval,
     }
     for k, v in cli_map.items():
@@ -240,7 +194,7 @@ def build_config(args: argparse.Namespace, yaml_path: Optional[Path]) -> PerfCon
     if "package" not in cfg_kwargs:
         raise ValueError("--package is required (or set 'package' in --config YAML)")
     if "output_dir" not in cfg_kwargs:
-        raise ValueError("--output is required")
+        cfg_kwargs["output_dir"] = _default_output(cfg_kwargs["package"])
 
     return PerfConfig(**cfg_kwargs)
 
@@ -257,7 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--package", default=None,
                    help="Target package (required unless set in --config)")
     p.add_argument("--output", default=None,
-                   help="Output directory (required)")
+                   help="Output directory (default: ./reports/<pkg>_<YYYYMMDD_HHMMSS>)")
     p.add_argument("--duration", type=_parse_duration, default=_parse_duration("5m"),
                    help="Run duration, e.g. 30s, 5m, 1h, 24h (default: 5m)")
     p.add_argument("--device", default=None,
@@ -297,16 +251,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status-interval", type=float, default=None,
                    help="status.json heartbeat interval seconds (default: 10)")
 
-    # Output gating (headless mode)
+    # Output
     p.add_argument("--no-html", action="store_true", help="Skip report.html")
-    p.add_argument("--emit-junit", action="store_true",
-                   help="Also emit report.junit.xml for CI dashboards")
-
-    # CI failure gating
-    p.add_argument("--fail-on", default=None,
-                   help="OR-combined comma list of conditions; exit 1 if any "
-                        "is true. Counters: alerts, cpu_alerts, mem_alerts, "
-                        "restarts. Default: no gating (exits 0 on success).")
 
     # Logging
     p.add_argument("-q", "--quiet", action="store_true")
@@ -364,19 +310,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if perf is None or perf._result is None:
         return EXIT_SIGINT if interrupted else EXIT_SETUP
-
-    # --fail-on gating
-    try:
-        triggered = evaluate_fail_on(args.fail_on, perf.result)
-    except ValueError as e:
-        log.error("%s", e)
-        return EXIT_SETUP
-
-    if triggered:
-        log.warning("fail-on triggered: %s", triggered)
-        perf.set_exit(EXIT_FAIL_ON, f"fail_on_triggered: {triggered}")
-        perf.rewrite_reports()
-        return EXIT_SIGINT if interrupted else EXIT_FAIL_ON
 
     if interrupted:
         return EXIT_SIGINT

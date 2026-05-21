@@ -10,10 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from perf_auto_test import PerfConfig, PerfTest
-from perf_auto_test.adb import AdbResult
-from perf_auto_test.device import DeviceSetupError
-from perf_auto_test.discovery import Process
+from pat import PerfConfig, PerfTest
+from pat.adb import AdbResult
+from pat.device import DeviceSetupError
+from pat.discovery import Process
 
 
 def _mk_result(stdout="", rc=0, stderr="") -> AdbResult:
@@ -114,17 +114,16 @@ class TestPerfTestHappyPath:
             mem_interval_sec=0.05,
             rescan_interval_sec=10,  # disable mid-run
             status_interval_sec=0.05,
-            emit_junit=True,
         )
-        with patch("perf_auto_test.discovery.discover", return_value=[proc]), \
-             patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.discovery.discover", return_value=[proc]), \
+             patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             with PerfTest(cfg, adb=adb,
                           discover_fn=lambda a, p: [proc]) as t:
                 time.sleep(0.20)
 
         for fname in ("report.json", "report.html",
-                      "report.junit.xml", "bookmarks.jsonl", "status.json"):
+                      "bookmarks.jsonl", "status.json"):
             assert (tmp_path / fname).exists(), f"missing {fname}"
 
     def test_result_accessible_after_stop(self, tmp_path):
@@ -134,9 +133,9 @@ class TestPerfTestHappyPath:
                          wait_timeout_sec=2.0,
                          cpu_interval_sec=0.05, mem_interval_sec=0.05,
                          rescan_interval_sec=10, status_interval_sec=10)
-        with patch("perf_auto_test.discovery.discover", return_value=[proc]), \
-             patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.discovery.discover", return_value=[proc]), \
+             patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             t = PerfTest(cfg, adb=adb, discover_fn=lambda a, p: [proc])
             t.start()
             time.sleep(0.10)
@@ -151,9 +150,9 @@ class TestPerfTestHappyPath:
                          wait_timeout_sec=2.0,
                          cpu_interval_sec=0.05, mem_interval_sec=0.05,
                          rescan_interval_sec=10, status_interval_sec=10)
-        with patch("perf_auto_test.discovery.discover", return_value=[proc]), \
-             patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.discovery.discover", return_value=[proc]), \
+             patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             with PerfTest(cfg, adb=adb, discover_fn=lambda a, p: [proc]) as t:
                 t.bookmark("phase_1_start")
                 time.sleep(0.10)
@@ -171,15 +170,15 @@ class TestPerfTestHappyPath:
                          wait_timeout_sec=2.0,
                          cpu_interval_sec=0.05, mem_interval_sec=0.05,
                          rescan_interval_sec=10, status_interval_sec=10)
-        with patch("perf_auto_test.discovery.discover", return_value=[proc]), \
-             patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.discovery.discover", return_value=[proc]), \
+             patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             with PerfTest(cfg, adb=adb, discover_fn=lambda a, p: [proc]) as t:
                 t.bookmark("x")
-                t.set_exit(1, "fail_on_triggered")
+                t.set_exit(1, "custom_stop")
                 time.sleep(0.05)
         assert t.result["run"]["exit_code"] == 1
-        assert t.result["run"]["exit_reason"] == "fail_on_triggered"
+        assert t.result["run"]["exit_reason"] == "custom_stop"
 
     def test_exception_in_with_block_recorded(self, tmp_path):
         proc = Process(pid=100, name="com.foo")
@@ -188,9 +187,9 @@ class TestPerfTestHappyPath:
                          wait_timeout_sec=2.0,
                          cpu_interval_sec=0.05, mem_interval_sec=0.05,
                          rescan_interval_sec=10, status_interval_sec=10)
-        with patch("perf_auto_test.discovery.discover", return_value=[proc]), \
-             patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.discovery.discover", return_value=[proc]), \
+             patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             with pytest.raises(ValueError):
                 with PerfTest(cfg, adb=adb, discover_fn=lambda a, p: [proc]) as t:
                     raise ValueError("user code blew up")
@@ -206,7 +205,7 @@ class TestPerfTestFailures:
         with pytest.raises(DeviceSetupError, match="not installed"):
             with PerfTest(cfg, adb=adb) as t:
                 pass  # pragma: no cover — body shouldn't run
-        # Report still written so AI/CI can see what happened.
+        # Report still written so the caller can see what happened.
         assert (tmp_path / "report.json").exists()
         result = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
         assert result["run"]["exit_code"] == 2
@@ -217,7 +216,7 @@ class TestPerfTestFailures:
         cfg = PerfConfig(package="com.foo", output_dir=tmp_path,
                          wait_timeout_sec=0.1)  # very short
         # No processes returned.
-        with patch("perf_auto_test.discovery.discover", return_value=[]):
+        with patch("pat.discovery.discover", return_value=[]):
             with pytest.raises(TimeoutError):
                 with PerfTest(cfg, adb=adb,
                               discover_fn=lambda a, p: []) as t:
@@ -236,9 +235,9 @@ class TestStatusJsonContents:
                          wait_timeout_sec=2.0,
                          cpu_interval_sec=0.05, mem_interval_sec=0.05,
                          rescan_interval_sec=10, status_interval_sec=0.05)
-        with patch("perf_auto_test.discovery.discover", return_value=[proc]), \
-             patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.discovery.discover", return_value=[proc]), \
+             patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             with PerfTest(cfg, adb=adb, discover_fn=lambda a, p: [proc]) as t:
                 time.sleep(0.15)
                 # Capture status mid-run.

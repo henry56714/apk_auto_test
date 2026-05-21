@@ -4,14 +4,14 @@
 
 > 给定包名，自动对任意 Android APK 做长时性能监控。无需修改 App、无需 root，纯 Python + adb，开箱即用。
 
-**适用场景**：App 发版前性能回归 / 长跑稳定性测试 / 自动化测试流水线集成 / 线下压测期间实时监控
+**适用场景**：App 发版前性能回归 / 长跑稳定性测试 / 线下压测期间实时监控
 
 ---
 
 ## 它做什么
 
 ```bash
-python -m perf_auto_test --package com.example.app --duration 30m --output ./reports/run1
+python -m pat --package com.example.app --duration 30m --output ./reports/run1
 ```
 
 一条命令完成全程：
@@ -32,7 +32,6 @@ python -m perf_auto_test --package com.example.app --duration 30m --output ./rep
 | **长跑稳定** | CSV 按小时滚动，adb 抖动自动重试，支持 1 h–24 h 不间断跑测 |
 | **防误报** | 阈值需持续触发（`sustain_sec`）才报警，单次毛刺不触发 |
 | **双模式** | 独立 CLI 运行 / Python 库嵌入现有测试框架 |
-| **CI 友好** | `--fail-on "alerts>=1"` 按条件返回非零退出码，支持 JUnit XML |
 | **AI 友好** | 每条 incident 含 `.txt`（人看）和 `.json`（机器读），`report.json` 是唯一权威数据源 |
 
 ---
@@ -52,7 +51,7 @@ python -m perf_auto_test --package com.example.app --duration 30m --output ./rep
 pip install -e perf_auto_test/scripts/
 
 # 5 分钟冒烟
-python -m perf_auto_test \
+python -m pat \
   --package com.example.app \
   --duration 5m \
   --output ./reports/smoke
@@ -64,7 +63,7 @@ open ./reports/smoke/report.html
 **多设备 / 自定义阈值**
 
 ```bash
-python -m perf_auto_test \
+python -m pat \
   --package com.example.app \
   --duration 30m \
   --device emulator-5554 \
@@ -73,26 +72,13 @@ python -m perf_auto_test \
   --output ./reports/run1
 ```
 
-**CI 流水线**
-
-```bash
-python -m perf_auto_test \
-  --package com.example.app \
-  --duration 30m \
-  --output ./reports/ci \
-  --fail-on "alerts>=1,restarts>=2" \
-  --emit-junit \
-  --no-html
-# exit 0 = pass  |  exit 1 = fail-on triggered
-```
-
 ---
 
 ## 报告产物
 
 ```
 reports/run1/
-├── report.json         ← 权威结果，AI / CI 直接读
+├── report.json         ← 权威结果，AI 直接读
 ├── report.html         ← Plotly 交互图（CPU / Mem / 生命周期，共享时间轴）
 ├── *.csv               ← 原始时序，按小时滚动
 └── incidents/
@@ -117,4 +103,4 @@ Skill 定义见 [`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md)。
 
 ## 详细文档
 
-完整参数说明、YAML 配置、库 API 模式、CI 退出码等见 [`perf_auto_test/README.md`](perf_auto_test/README.md)。
+完整参数说明、YAML 配置、库 API 模式等见 [`perf_auto_test/README.md`](perf_auto_test/README.md)。

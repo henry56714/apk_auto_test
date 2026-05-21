@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-perf-auto-test = "perf_auto_test.cli:main"
+perf-auto-test = "pat.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

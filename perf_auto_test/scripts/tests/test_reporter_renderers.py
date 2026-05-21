@@ -1,18 +1,16 @@
-"""Tests for markdown, html, and junit renderers."""
+"""Tests for markdown and html renderers."""
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from perf_auto_test.reporter import html as html_mod
-from perf_auto_test.reporter import junit as junit_mod
-from perf_auto_test.reporter import markdown as md_mod
-from perf_auto_test.reporter import result as result_mod
-from perf_auto_test.storage import (
+from pat.reporter import html as html_mod
+from pat.reporter import markdown as md_mod
+from pat.reporter import result as result_mod
+from pat.storage import (
     CPU_COLUMNS,
     CPU_SCHEMA_TAG,
     LIFECYCLE_COLUMNS,
@@ -188,59 +186,3 @@ class TestHtml:
         assert path.name == "report.html"
         assert path.exists()
         assert path.stat().st_size > 1000  # Plotly bundle reference + chart data
-
-
-# -----------------------------------------------------------------------------
-# JUnit
-# -----------------------------------------------------------------------------
-
-class TestJunit:
-    def test_well_formed_xml(self, populated):
-        _, result = populated
-        xml_text = junit_mod.render(result)
-        # Round-trip parse — fails if malformed.
-        root = ET.fromstring(xml_text)
-        assert root.tag == "testsuites"
-
-    def test_one_testsuite_with_correct_counts(self, populated):
-        _, result = populated
-        xml_text = junit_mod.render(result)
-        root = ET.fromstring(xml_text)
-        suites = root.findall("testsuite")
-        assert len(suites) == 1
-        s = suites[0]
-        # 1 process × 2 metrics = 2 testcases, with both failing in our fixture.
-        assert int(s.attrib["tests"]) == 2
-        assert int(s.attrib["failures"]) == 2
-
-    def test_failure_messages_useful(self, populated):
-        _, result = populated
-        xml_text = junit_mod.render(result)
-        root = ET.fromstring(xml_text)
-        failures = root.findall(".//failure")
-        assert len(failures) == 2
-        msgs = [f.get("message") for f in failures]
-        # At least one mentions cpu and one mentions mem
-        assert any("cpu" in m for m in msgs)
-        assert any("mem" in m for m in msgs)
-
-    def test_setup_error_recorded_when_exit_code_high(self, tmp_path):
-        result = result_mod.build(
-            output_dir=tmp_path, package="com.empty",
-            started_at=_utc(), ended_at=_utc(minute=1),
-            device={"serial": "X", "android_version": "10", "sdk_int": 29, "cpu_cores": 4},
-            config_effective={}, exit_code=2, exit_reason="package_not_installed",
-        )
-        xml_text = junit_mod.render(result)
-        root = ET.fromstring(xml_text)
-        errors = root.findall(".//error")
-        assert len(errors) == 1
-        assert "package_not_installed" in errors[0].get("message", "")
-
-    def test_write_produces_file(self, populated):
-        tmp_path, result = populated
-        path = junit_mod.write(result, tmp_path)
-        assert path.name == "report.junit.xml"
-        assert path.exists()
-        # Round-trip parse the written file
-        ET.parse(path)

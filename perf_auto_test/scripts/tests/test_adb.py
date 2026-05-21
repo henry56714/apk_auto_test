@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from perf_auto_test.adb import (
+from pat.adb import (
     Adb,
     AdbError,
     AdbNotFound,

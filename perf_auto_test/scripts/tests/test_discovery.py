@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from perf_auto_test import discovery
-from perf_auto_test.adb import AdbResult
-from perf_auto_test.discovery import (
+from pat import discovery
+from pat.adb import AdbResult
+from pat.discovery import (
     Process,
     parse_dumpsys_processes,
     parse_ps_old_output,

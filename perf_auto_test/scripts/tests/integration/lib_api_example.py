@@ -24,7 +24,7 @@ from pathlib import Path
 
 import jsonschema
 
-from perf_auto_test import PerfConfig, PerfTest
+from pat import PerfConfig, PerfTest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO_ROOT / "schemas" / "report.schema.json"
@@ -46,7 +46,6 @@ def main(package: str, output_dir: Path) -> int:
         mem_sustain_sec=5.0,
         mem_cooldown_sec=30.0,
         status_interval_sec=5.0,
-        emit_junit=True,
     )
 
     print(f"[lib_api_example] starting; output={output_dir}", file=sys.stderr)

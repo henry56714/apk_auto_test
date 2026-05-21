@@ -20,18 +20,17 @@
 perf_auto_test/
 ├── SKILL.md              Claude Code Skill 定义（skill 入口）
 ├── README.md             本文档
-├── examples/
-│   └── config.example.yaml   最小化配置示例
-└── scripts/              Python 包（源码 + 测试）
+└── scripts/              Python 包（源码 + 测试，命令在此目录下运行）
+    ├── config.example.yaml   配置示例（复制后按需修改）
     ├── pyproject.toml
     ├── requirements.txt
     ├── requirements-dev.txt
-    ├── perf_auto_test/   核心包
+    ├── pat/   核心包
     │   ├── api.py            PerfConfig / PerfTest（库 API）
     │   ├── cli.py            CLI 入口（薄壳）
     │   ├── collectors/       CPU / 内存采集线程
     │   ├── dumpers/          线程 CPU dump / heap dump
-    │   ├── reporter/         report.json 构建 + HTML / JUnit 渲染
+    │   ├── reporter/         report.json 构建 + HTML 渲染
     │   └── ...
     ├── schemas/
     │   └── report.schema.json
@@ -58,11 +57,11 @@ perf_auto_test/
 **Skill 自动完成**
 
 1. 检查 adb 环境与依赖
-2. 执行 `python -m perf_auto_test` 并实时展示日志
+2. 执行 `python -m pat` 并实时展示日志
 3. 采集结束后打开 `report.html` 交互式图表
 4. 输出本次测试的结构化总结（整体状态 / 进程概览 / 报警事件 / 结论）
 
-> Skill 定义文件见 `SKILL.md`，可配合 `examples/config.example.yaml` 覆盖阈值。
+> Skill 定义文件见 `SKILL.md`，可配合 `scripts/config.example.yaml` 覆盖阈值。
 
 ---
 
@@ -82,25 +81,27 @@ pip install -r scripts/requirements-dev.txt
 
 #### 基本用法
 
+以下命令均在 `perf_auto_test/scripts/` 目录下执行。
+
 ```bash
 # 确认设备已连，App 已启动
 adb devices
 
 # 5 分钟采集，默认阈值（CPU 80%、内存 500 MB）
-python -m perf_auto_test \
+python -m pat \
   --package com.example.app \
   --duration 5m \
   --output ./reports/run-001
 
 # 使用配置文件覆盖阈值（推荐长跑场景）
-python -m perf_auto_test \
-  --config examples/config.example.yaml \
+python -m pat \
+  --config config.example.yaml \
   --package com.example.app \
   --duration 30m \
   --output ./reports/run-002
 
 # 多设备时必须指定 serial
-python -m perf_auto_test \
+python -m pat \
   --package com.example.app \
   --duration 5m \
   --device emulator-5554 \
@@ -111,9 +112,8 @@ python -m perf_auto_test \
 
 ```
 reports/run-001/
-├── report.json               ★ 权威结构化结果（AI / CI 唯一数据源）
+├── report.json               ★ 权威结构化结果（AI 分析唯一数据源）
 ├── report.html               ★ Plotly 交互式图（CPU / Mem / 生命周期）
-├── report.junit.xml            可选，--emit-junit 时生成
 ├── status.json                 心跳：当前 pid 列表、dump 计数（每 10 s 刷新）
 ├── bookmarks.jsonl             时间轴打点（库 API 或外部进程追加）
 ├── cpu_2026-05-21_10.csv       时序原始，按小时滚动
@@ -136,7 +136,7 @@ reports/run-001/
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `--package` | 必填 | 目标包名 |
-| `--output` | 必填 | 报告输出目录 |
+| `--output` | `./reports/<包名末段>_<YYYYMMDD_HHMMSS>` | 报告输出目录（不填时自动生成） |
 | `--duration` | `5m` | 采集时长，支持 `30s`、`5m`、`1h`、`24h` |
 | `--device` | 自动取唯一设备 | ADB serial；多设备时必填 |
 | `--config` | — | YAML 配置路径，CLI 参数始终优先 |
@@ -149,8 +149,6 @@ reports/run-001/
 | `--processes` | 全部 | 进程名过滤，逗号分隔（如 `:remote,:push`） |
 | `--no-heap-dumps` | — | 禁用 `am dumpheap`（仍保留 meminfo dump） |
 | `--no-html` | — | 跳过 report.html |
-| `--emit-junit` | — | 额外输出 report.junit.xml |
-| `--fail-on` | — | CI 失败门控，见下节 |
 | `-q` / `--quiet` | — | 仅 WARNING 及以上日志 |
 | `-v` / `--verbose` | — | DEBUG 日志 |
 | `--log-json` | — | 日志以 JSON lines 写到 stderr |
@@ -161,7 +159,7 @@ reports/run-001/
 
 ### 最小配置（推荐）
 
-`examples/config.example.yaml` 只覆盖常用的阈值，其余参数由代码常量控制：
+`scripts/config.example.yaml` 只覆盖常用的阈值，其余参数由代码常量控制：
 
 ```yaml
 package: com.example.app
@@ -210,33 +208,16 @@ dumps:
 
 output:
   emit_html: true
-  emit_junit: false
   status_interval_sec: 10
 ```
 
 ---
 
-## CI 集成 / 退出码
-
-`--fail-on` 把告警 / 重启计数转成 CI 通过 / 失败信号：
-
-```bash
-python -m perf_auto_test \
-  --package com.example.app \
-  --duration 30m \
-  --output ./reports/ci \
-  --fail-on "alerts>=1,restarts>=2" \
-  --emit-junit \
-  --no-html
-```
-
-可用计数器：`alerts`（cpu+mem 合计）、`cpu_alerts`、`mem_alerts`、`restarts`。
-多个条件用逗号分隔，OR 语义——任意一个触发即失败。
+## 退出码
 
 | 退出码 | 含义 |
 |---|---|
-| `0` | 正常结束，`--fail-on` 未触发 |
-| `1` | `--fail-on` 条件触发 |
+| `0` | 正常结束 |
 | `2` | 启动前置失败（adb 不可用、包未安装、参数错误等） |
 | `3` | 等待进程超时（`wait_timeout_sec` 内未发现目标进程） |
 | `130` | SIGINT（Ctrl+C） |
@@ -246,7 +227,7 @@ python -m perf_auto_test \
 ## 库 API 模式（嵌入测试框架）
 
 ```python
-from perf_auto_test import PerfConfig, PerfTest
+from pat import PerfConfig, PerfTest
 
 cfg = PerfConfig(
     package="com.example.app",

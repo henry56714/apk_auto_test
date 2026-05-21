@@ -2,7 +2,7 @@
 
 Public entry points:
 - PerfTest / PerfConfig  — library API
-- main (CLI)             — `python -m perf_auto_test`
+- main (CLI)             — `python -m pat`
 """
 
 from .api import PerfConfig, PerfTest

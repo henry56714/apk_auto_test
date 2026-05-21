@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from perf_auto_test.bookmark import BookmarkWriter
+from pat.bookmark import BookmarkWriter
 
 
 class TestBookmarkWriter:

@@ -10,17 +10,17 @@ from unittest.mock import patch
 
 import pytest
 
-from perf_auto_test.alerting import ThresholdConfig
-from perf_auto_test.collectors.cpu import CpuSample
-from perf_auto_test.collectors.memory import MemSample
-from perf_auto_test.discovery import Process
-from perf_auto_test.pool import (
+from pat.alerting import ThresholdConfig
+from pat.collectors.cpu import CpuSample
+from pat.collectors.memory import MemSample
+from pat.discovery import Process
+from pat.pool import (
     CollectorPool,
     DumpsConfig,
     ThresholdsBundle,
     _normalize_filter,
 )
-from perf_auto_test.storage import (
+from pat.storage import (
     CPU_COLUMNS,
     CPU_SCHEMA_TAG,
     LIFECYCLE_COLUMNS,
@@ -108,8 +108,8 @@ class TestPoolStatic:
             rescan_interval_sec=10,
             discover_fn=_static_discover([proc]),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[proc])
             time.sleep(0.05)
             pool.stop(join_timeout=2.0)
@@ -143,8 +143,8 @@ class TestPoolStatic:
             rescan_interval_sec=10,
             discover_fn=_static_discover([proc]),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", side_effect=fake_sample), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", side_effect=fake_sample), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[proc])
             time.sleep(0.15)
             pool.stop(join_timeout=2.0)
@@ -173,8 +173,8 @@ class TestPoolStatic:
             rescan_interval_sec=10,
             discover_fn=_static_discover([proc]),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=mem_sample):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=mem_sample):
             pool.start(initial_processes=[proc])
             time.sleep(0.10)
             pool.stop(join_timeout=2.0)
@@ -197,8 +197,8 @@ class TestPoolStatic:
             cpu_interval_sec=30, mem_interval_sec=30, rescan_interval_sec=30,
             discover_fn=_static_discover([proc]),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[proc])
             time.sleep(0.05)
             t0 = time.monotonic()
@@ -221,8 +221,8 @@ class TestPoolStatic:
             rescan_interval_sec=10,
             discover_fn=_static_discover([proc]),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[proc])
             time.sleep(0.15)
             pool.stop(join_timeout=2.0)
@@ -249,8 +249,8 @@ class TestPoolStatic:
             rescan_interval_sec=10,
             discover_fn=_static_discover([proc]),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=mem_sample):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=mem_sample):
             pool.start(initial_processes=[proc])
             time.sleep(0.10)
             pool.stop(join_timeout=2.0)
@@ -282,8 +282,8 @@ class TestPoolStatic:
             cpu_interval_sec=0.02, mem_interval_sec=10, rescan_interval_sec=10,
             discover_fn=_static_discover([proc]),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", side_effect=fake_sample), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", side_effect=fake_sample), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[proc])
             time.sleep(0.20)
             pool.stop(join_timeout=2.0)
@@ -307,8 +307,8 @@ class TestPoolDynamic:
             rescan_interval_sec=0.03,
             discover_fn=_mutable_discover(state),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start()
             # Add a process after the watcher is running.
             state["live"] = [Process(pid=42, name="com.foo")]
@@ -332,8 +332,8 @@ class TestPoolDynamic:
             rescan_interval_sec=0.03,
             discover_fn=_mutable_discover(state),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[p])
             time.sleep(0.10)
             state["live"] = []  # process gone
@@ -356,8 +356,8 @@ class TestPoolDynamic:
             rescan_interval_sec=0.03,
             discover_fn=_mutable_discover(state),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=state["live"])
             time.sleep(0.10)
             state["live"] = [Process(pid=200, name="com.foo")]
@@ -390,8 +390,8 @@ class TestPoolDynamic:
             process_filter=[":remote"],  # only :remote should be monitored
             discover_fn=_static_discover([main_p, remote_p, push_p]),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[main_p, remote_p, push_p])
             time.sleep(0.10)
             current = {p.name for p in pool.current_processes()}
@@ -412,8 +412,8 @@ class TestPoolDynamic:
             rescan_interval_sec=0.03,
             discover_fn=_mutable_discover(state),
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=state["live"])
             time.sleep(0.10)
             state["live"] = []
@@ -482,8 +482,8 @@ class TestPoolAlerting:
             cpu_dump_fn=fake_cpu_dump,
             heap_dump_fn=fake_heap_dump,
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", side_effect=fake_cpu_sample), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", side_effect=fake_cpu_sample), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[proc])
             time.sleep(0.25)
             pool.stop(join_timeout=3.0)
@@ -523,8 +523,8 @@ class TestPoolAlerting:
             cpu_dump_fn=fake_cpu_dump,
             heap_dump_fn=fake_heap_dump,
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", return_value=None), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=mem_sample):
+        with patch("pat.pool.cpu_mod.sample", return_value=None), \
+             patch("pat.pool.mem_mod.sample", return_value=mem_sample):
             pool.start(initial_processes=[proc])
             time.sleep(0.20)
             pool.stop(join_timeout=3.0)
@@ -570,8 +570,8 @@ class TestPoolAlerting:
             cpu_dump_fn=fake_cpu_dump,
             heap_dump_fn=lambda *a, **k: None,
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", side_effect=fake_cpu_sample), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", side_effect=fake_cpu_sample), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[proc])
             time.sleep(0.30)
             pool.stop(join_timeout=3.0)
@@ -612,8 +612,8 @@ class TestPoolAlerting:
             cpu_dump_fn=fake_cpu_dump,
             heap_dump_fn=lambda *a, **k: None,
         )
-        with patch("perf_auto_test.pool.cpu_mod.sample", side_effect=fake_sample), \
-             patch("perf_auto_test.pool.mem_mod.sample", return_value=None):
+        with patch("pat.pool.cpu_mod.sample", side_effect=fake_sample), \
+             patch("pat.pool.mem_mod.sample", return_value=None):
             pool.start(initial_processes=[proc])
             time.sleep(0.20)
             pool.stop(join_timeout=2.0)

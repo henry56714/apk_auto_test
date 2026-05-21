@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from perf_auto_test.status import StatusWriter
+from pat.status import StatusWriter
 
 
 class TestStatusWriter:

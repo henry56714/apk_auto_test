@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from perf_auto_test.alerting import State, ThresholdConfig, ThresholdTracker
+from pat.alerting import State, ThresholdConfig, ThresholdTracker
 
 
 def _cfg(value: float = 80.0, sustain: float = 60.0, cooldown: float = 300.0) -> ThresholdConfig:

@@ -27,7 +27,6 @@ from .device import DeviceInfo, DeviceSetupError, preflight
 from .discovery import wait_for_processes
 from .pool import CollectorPool, DumpsConfig, ThresholdsBundle
 from .reporter import html as html_renderer
-from .reporter import junit as junit_renderer
 from .reporter import result as result_builder
 from .status import StatusWriter
 from .storage import (
@@ -58,7 +57,6 @@ DEFAULT_MAX_CPU_DUMPS: int = 50
 DEFAULT_MAX_HEAP_DUMPS: int = 20
 DEFAULT_MAX_CONCURRENT_DUMPS: int = 2
 DEFAULT_EMIT_HTML: bool = True
-DEFAULT_EMIT_JUNIT: bool = False
 DEFAULT_STATUS_INTERVAL_SEC: float = 10.0
 
 
@@ -88,7 +86,6 @@ class PerfConfig:
     max_concurrent_dumps: int = DEFAULT_MAX_CONCURRENT_DUMPS
 
     emit_html: bool = DEFAULT_EMIT_HTML
-    emit_junit: bool = DEFAULT_EMIT_JUNIT
 
     status_interval_sec: float = DEFAULT_STATUS_INTERVAL_SEC
 
@@ -271,11 +268,7 @@ class PerfTest:
         self._bookmarks.append(label, metadata)
 
     def set_exit(self, exit_code: int, exit_reason: str) -> None:
-        """Tell the report what to record as the run's terminal state.
-
-        Useful when a parent test harness wants the report to reflect a CI
-        gating decision ('fail_on_triggered', 'budget_exceeded', etc.).
-        """
+        """Tell the report what to record as the run's terminal state."""
         self._exit_code = int(exit_code)
         self._exit_reason = str(exit_reason)
 
@@ -294,7 +287,7 @@ class PerfTest:
         self._exit_reason = exit_reason
         self._stopped = True
         self._ended_at = datetime.now(timezone.utc)
-        # Still build a (minimal) report so AI/CI can see what happened.
+        # Still build a (minimal) report so the caller can see what happened.
         try:
             self._build_and_write_reports()
         except Exception:
@@ -349,10 +342,5 @@ class PerfTest:
                 html_renderer.write(result, self.config.output_dir)
             except Exception:
                 log.exception("html render failed")
-        if self.config.emit_junit:
-            try:
-                junit_renderer.write(result, self.config.output_dir)
-            except Exception:
-                log.exception("junit render failed")
 
         self._result = result
