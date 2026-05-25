@@ -1,0 +1,19 @@
+Drop box contents: 3 entries
+========================================
+2026-05-21 10:00:00 data_app_crash (text, 1234 bytes)
+Process: com.example.app
+PID: 1234
+java.lang.RuntimeException: something broke
+	at com.example.app.MainActivity.onCreate(MainActivity.java:10)
+========================================
+2026-05-21 10:05:00 SYSTEM_TOMBSTONE (compressed text, 2048 bytes)
+pid: 1234, tid: 5678, name: Thread-1  >>> com.example.app <<<
+signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0
+backtrace:
+      #00 pc 0000abcd  /system/lib64/libc.so
+========================================
+2026-05-21 10:10:00 data_app_anr (text, 512 bytes)
+Process: com.example.app
+PID: 1234
+Reason: Input dispatching timed out
+========================================

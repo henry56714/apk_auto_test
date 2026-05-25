@@ -1,0 +1,20 @@
+package: com.example.app
+device: null                          # 空 = 取 `adb devices` 唯一在线设备；多台则必填 --device
+
+discovery:
+  wait_timeout_sec: 60
+  rescan_interval_sec: 5
+
+collectors:
+  logcat:
+    buffers: [main, system, events, crash]
+  dropbox:
+    poll_interval_sec: 30
+
+detection:
+  enable_java_crash: true
+  enable_native_crash: true
+  enable_anr: true
+  enable_process_death: true
+  dedup_window_sec: 5         # 主机时间兜底窗口（仅用于无 device_ts 的 watcher 事件）
+  # device_ts_window_sec: 10 # 设备时间主窗口（内部默认 10s；logcat 与 dropbox 跨源去重依赖此值）

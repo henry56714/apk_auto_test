@@ -1,0 +1,3 @@
+05-21 10:00:00.100   500   500 I am_proc_died: [0,1234,com.example.app,800,17,4]
+05-21 10:00:00.200   500   500 I am_kill: [0,1235,com.example.app:remote,800,empty]
+05-21 10:00:00.300   500   500 I am_anr: [0,1236,com.example.app,1073741825,Input dispatching timed out]

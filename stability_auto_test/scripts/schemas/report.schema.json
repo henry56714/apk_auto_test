@@ -1,0 +1,332 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "stability_auto_test report v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run",
+    "processes",
+    "incidents",
+    "lifecycle_events",
+    "bookmarks",
+    "data_files"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "started_at",
+        "ended_at",
+        "duration_sec",
+        "exit_code",
+        "exit_reason",
+        "device",
+        "package",
+        "config_effective"
+      ],
+      "properties": {
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ended_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_sec": {
+          "type": "number"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "exit_reason": {
+          "type": "string"
+        },
+        "device": {
+          "type": "object"
+        },
+        "package": {
+          "type": "string"
+        },
+        "config_effective": {
+          "type": "object"
+        }
+      }
+    },
+    "processes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/process"
+      }
+    },
+    "incidents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/incident"
+      }
+    },
+    "lifecycle_events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/lifecycle_event"
+      }
+    },
+    "bookmarks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/bookmark"
+      }
+    },
+    "data_files": {
+      "type": "object",
+      "required": [
+        "events",
+        "lifecycle",
+        "logcat"
+      ],
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lifecycle": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "logcat": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "process": {
+      "type": "object",
+      "required": [
+        "name",
+        "uptime_ratio",
+        "restart_count",
+        "events"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "first_seen_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_seen_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uptime_ratio": {
+          "type": "number"
+        },
+        "restart_count": {
+          "type": "integer"
+        },
+        "events": {
+          "type": "object",
+          "properties": {
+            "java_crash": {
+              "type": "integer"
+            },
+            "native_crash": {
+              "type": "integer"
+            },
+            "anr": {
+              "type": "integer"
+            },
+            "process_death": {
+              "type": "integer"
+            }
+          }
+        },
+        "sample_failures": {
+          "type": "object"
+        }
+      }
+    },
+    "incident": {
+      "type": "object",
+      "required": [
+        "type",
+        "process",
+        "triggered_at",
+        "severity",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "java_crash",
+            "native_crash",
+            "anr",
+            "process_death"
+          ]
+        },
+        "process": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "triggered_at": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "object",
+          "properties": {
+            "logcat_slice_file": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "trace_file": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "exception_class": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "signal": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fault_addr": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "top_frames": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "source": {
+              "type": "string"
+            },
+            "dedup_count": {
+              "type": "integer"
+            },
+            "fallback_reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "device_ts": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "dropbox_file": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Filename of matching dropbox entry body, or null if not found"
+            }
+          }
+        }
+      }
+    },
+    "lifecycle_event": {
+      "type": "object",
+      "required": [
+        "timestamp",
+        "process",
+        "event"
+      ],
+      "properties": {
+        "timestamp": {
+          "type": "string"
+        },
+        "process": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "enum": [
+            "new",
+            "restart",
+            "gone"
+          ]
+        },
+        "old_pid": {
+          "type": "integer"
+        },
+        "new_pid": {
+          "type": "integer"
+        },
+        "gap_sec": {
+          "type": "number"
+        }
+      }
+    },
+    "bookmark": {
+      "type": "object",
+      "required": [
+        "timestamp",
+        "label"
+      ],
+      "properties": {
+        "timestamp": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

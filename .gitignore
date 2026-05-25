@@ -18,9 +18,11 @@ venv/
 env/
 
 # ── 项目产物 ──────────────────────────────────────────────
-# 运行时生成的性能测试报告（体积大，不入库）
+# 运行时生成的测试报告（体积大，不入库）
 perf_auto_test/scripts/reports
 perf_auto_test/reports
+stability_auto_test/scripts/reports
+stability_auto_test/reports
 
 # 临时文件
 tmp/

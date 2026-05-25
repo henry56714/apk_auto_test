@@ -1,106 +1,115 @@
-# Android APK Performance Auto-Test
+# Android APK Auto-Test Suite
 
 **[中文](README.zh.md)** | **English**
 
-> Automated long-running performance monitoring for any Android APK. No app modification, no root required — pure Python + adb.
-
-**Use cases**: Pre-release performance regression / stability soak testing / real-time monitoring during load testing
+> Two independent Python + adb tools for automated Android APK testing — no app modification, no root required.
 
 ---
 
-## What it does
+## Tools at a glance
 
-```bash
-python -m pat --package com.example.app --duration 30m --output ./reports/run1
-```
+| Tool | What it detects | Module | Path |
+|---|---|---|---|
+| **perf_auto_test** | CPU spikes · memory leaks · threshold breaches | `pat` | `perf_auto_test/` |
+| **stability_auto_test** | Java crash · Native crash · ANR · process death | `sat` | `stability_auto_test/` |
 
-One command handles everything:
+Both tools share the same design principles:
 
-1. **Auto-discovers processes** — main process + all child processes (multi-process apps like `:remote`, `:push` supported out of the box)
-2. **Parallel collection** — CPU% (every 1 s) + memory PSS (every 5 s), per-process, written to hourly-rolling CSVs
-3. **Threshold-triggered dumps** — CPU spike → thread snapshot (`top -H`); memory breach → `dumpsys meminfo`; debuggable apps get `.hprof` on top
-4. **Structured reports** — `report.json` (machine/AI-readable) + `report.html` (Plotly interactive charts, open in browser)
-
----
-
-## Key features
-
-| Feature | Description |
-|---|---|
-| **Package-agnostic** | Any third-party app or system service — just the package name |
-| **Non-invasive** | No APK modification, no root, no debuggable build required |
-| **Long-run stable** | Hourly CSV rotation, adb retry with backoff, handles 1 h–24 h runs |
-| **Spike-resistant** | Alerts only fire after threshold is held for `sustain_sec`, ignoring single-sample spikes |
-| **Dual mode** | Standalone CLI or Python library embedded in a larger test framework |
-| **AI-ready** | Every incident includes a `.txt` (human) and `.json` (machine); `report.json` is the single source of truth |
+- **Package-agnostic** — any third-party app or system service, just the package name
+- **Non-invasive** — no APK modification, no root, no debuggable build required
+- **Long-run stable** — hourly rolling CSV/log, adb retry with backoff, handles 1 h–24 h runs
+- **Three modes** — standalone CLI / Python library embedded in a larger test framework / Claude Code Skill
+- **AI-ready** — structured `report.json` + interactive `report.html` (Plotly)
 
 ---
 
 ## Requirements
 
 - Python 3.9+
-- `adb` available (`adb devices` shows the target device)
-- Target app already running on device (this tool does not launch apps)
-
----
-
-## Quick start
-
-```bash
-# Install
-pip install -e perf_auto_test/scripts/
-
-# 5-minute smoke run
-python -m pat \
-  --package com.example.app \
-  --duration 5m \
-  --output ./reports/smoke
-
-# Open report
-open ./reports/smoke/report.html
-```
-
-**Multiple devices / custom thresholds**
-
-```bash
-python -m pat \
-  --package com.example.app \
-  --duration 30m \
-  --device emulator-5554 \
-  --cpu-threshold-percent 60 \
-  --mem-threshold-pss-mb 400 \
-  --output ./reports/run1
-```
-
----
-
-## Report output
-
-```
-reports/run1/
-├── report.json         ← authoritative result, read by AI
-├── report.html         ← Plotly interactive charts (CPU / Mem / lifecycle, shared x-axis)
-├── *.csv               ← raw time-series, hourly rotation
-└── incidents/
-    ├── cpu_<ts>_<proc>_pid<n>.json     ← top-N threads + trigger metadata
-    ├── heap_<ts>_<proc>_pid<n>.json    ← memory categories + evaluation
-    └── ...                             ← corresponding raw .txt files
-```
+- `adb` available in PATH (`adb devices` shows the target device)
+- Target app already running on device
 
 ---
 
 ## Claude Code Skill integration
 
-This tool is also a **Claude Code Skill**. Trigger it with natural language inside Claude Code — Claude handles execution, opens the HTML report, and outputs a structured test summary:
+Both tools ship as **Claude Code Skills** — trigger them with natural language inside Claude Code:
 
 ```
 /perf-auto-test com.example.app 30m
+/stability-auto-test com.example.app 1h
 ```
 
-Skill definition: [`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md)
+Claude handles execution, opens the HTML report, and outputs a structured test summary.
+
+Skill definitions: [`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
 
 ---
 
-## Full documentation
+## perf_auto_test — Performance Monitoring
 
-Complete CLI reference, YAML config, Python library API: [`perf_auto_test/README.md`](perf_auto_test/README.md)
+Auto-discovers all processes for a given package, collects CPU% and memory PSS in parallel, triggers automatic dumps (thread snapshot / heap dump) when thresholds are breached.
+
+```bash
+cd perf_auto_test/scripts
+pip install -r requirements-dev.txt
+
+python -m pat \
+  --package com.example.app \
+  --duration 30m \
+  --cpu-threshold-percent 60 \
+  --mem-threshold-pss-mb 400 \
+  --output ./reports/run1
+```
+
+**Output**
+
+```
+reports/run1/
+├── report.json         ← authoritative result (AI / CI readable)
+├── report.html         ← Plotly interactive charts (CPU / Mem / lifecycle)
+├── *.csv               ← raw time-series, hourly rotation
+└── incidents/
+    ├── cpu_<ts>_<proc>_pid<n>.json   ← top-N threads + trigger metadata
+    ├── heap_<ts>_<proc>_pid<n>.json  ← memory categories + evaluation
+    └── ...
+```
+
+Full docs: [`perf_auto_test/README.md`](perf_auto_test/README.md)
+
+---
+
+## stability_auto_test — Stability Monitoring
+
+Streams logcat and polls dropbox in parallel, captures Java/Native crash, ANR, and process-death events, saves incident snapshots (logcat slice + tombstone/ANR trace), and produces a structured report with an interactive event timeline.
+
+> **Note**: This tool does not launch the app — the target process must already be running.
+
+```bash
+cd stability_auto_test/scripts
+pip install -r requirements-dev.txt
+
+python -m sat \
+  --package com.example.app \
+  --duration 30m \
+  --output ./reports/run1
+```
+
+**Output**
+
+```
+reports/run1/
+├── report.json               ← authoritative result (AI / CI readable)
+├── report.html               ← Plotly event timeline + process stability table
+├── events_*.csv              ← event stream, hourly rotation
+├── lifecycle_*.csv           ← process lifecycle, hourly rotation
+├── logcat_*.log              ← raw logcat, hourly rotation
+└── incidents/
+    ├── java_crash_<ts>_<proc>_pid<n>.txt   ← logcat slice (human-readable)
+    ├── java_crash_<ts>_<proc>_pid<n>.json  ← exception class + top frames + metadata
+    ├── native_crash_<ts>_<proc>_pid<n>.tombstone  (when accessible)
+    ├── anr_<ts>_<proc>_pid<n>.trace               (when accessible)
+    └── ...
+```
+
+Full docs: [`stability_auto_test/README.md`](stability_auto_test/README.md)

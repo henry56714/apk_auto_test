@@ -1,0 +1,12 @@
+05-21 10:00:00.100  1234  5678 F libc    : Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0 in tid 5678 (Thread-1), pid 1234 (com.example.app)
+05-21 10:00:00.200  9999  9999 F DEBUG   : *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+05-21 10:00:00.200  9999  9999 F DEBUG   : Build fingerprint: 'google/sdk_phone_x86_64/emu64x:14/UE1A.230829.036/10869450:userdebug/dev-keys'
+05-21 10:00:00.200  9999  9999 F DEBUG   : Revision: '0'
+05-21 10:00:00.200  9999  9999 F DEBUG   : ABI: 'arm64'
+05-21 10:00:00.200  9999  9999 F DEBUG   : pid: 1234, tid: 5678, name: Thread-1  >>> com.example.app <<<
+05-21 10:00:00.200  9999  9999 F DEBUG   : signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0
+05-21 10:00:00.200  9999  9999 F DEBUG   :     x0 0000000000000000  x1 00000000abcdef00
+05-21 10:00:00.200  9999  9999 F DEBUG   : backtrace:
+05-21 10:00:00.200  9999  9999 F DEBUG   :       #00 pc 000000000000abcd  /system/lib64/libc.so (strcmp+0x10)
+05-21 10:00:00.200  9999  9999 F DEBUG   :       #01 pc 000000000001234d  /data/app/~~xyz==/com.example.app-abcd==/lib/arm64/libnative.so (foo+0x20)
+05-21 10:00:00.300   500   500 I ActivityManager: somebody else now

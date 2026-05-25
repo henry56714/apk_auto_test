@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stability-auto-test"
+version = "0.1.0"
+description = "Generic Android APK stability auto-test: logcat/dropbox-driven Java crash / native crash / ANR / process death capture with structured reports"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "PyYAML>=6.0",
+    "pandas>=2.0",
+    "plotly>=5.18",
+    "jsonschema>=4.20",
+]
+
+[project.scripts]
+stability-auto-test = "sat.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
