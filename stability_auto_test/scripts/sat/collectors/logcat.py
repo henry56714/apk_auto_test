@@ -15,7 +15,6 @@ import logging
 import re
 import subprocess
 import threading
-import time
 from typing import Callable, Iterable, List, Optional, Sequence
 
 log = logging.getLogger(__name__)
@@ -24,9 +23,7 @@ DEFAULT_BUFFERS: Sequence[str] = ("main", "system", "events", "crash")
 RECONNECT_BACKOFF_BASE_SEC = 2.0
 RECONNECT_BACKOFF_MAX_SEC = 30.0
 
-_TS_PREFIX_RE = re.compile(
-    r"^(?P<ts>(?:\d{4}-)?\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})"
-)
+_TS_PREFIX_RE = re.compile(r"^(?P<ts>(?:\d{4}-)?\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})")
 
 
 def _extract_device_ts(line: str) -> Optional[str]:
@@ -111,6 +108,8 @@ class LogcatStream:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     bufsize=1,
                 )
             except FileNotFoundError:
@@ -148,8 +147,7 @@ class LogcatStream:
             if self._stop.is_set():
                 return
             self._reconnects += 1
-            log.warning("logcat ended; reconnecting in %.1fs (n=%d)",
-                        backoff, self._reconnects)
+            log.warning("logcat ended; reconnecting in %.1fs (n=%d)", backoff, self._reconnects)
             self._sleep_backoff(backoff)
             backoff = min(RECONNECT_BACKOFF_MAX_SEC, backoff * 2)
 
