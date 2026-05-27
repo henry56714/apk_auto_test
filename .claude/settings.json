@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in *.py) ruff format \"$f\" >/dev/null 2>&1; ruff check --fix --quiet \"$f\" >/dev/null 2>&1;; esac; } || true",
+            "statusMessage": "ruff format"
+          }
+        ]
+      }
+    ]
+  }
+}

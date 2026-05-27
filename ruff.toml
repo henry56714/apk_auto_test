@@ -1,0 +1,10 @@
+# Shared lint/format config for both perf_auto_test and stability_auto_test.
+target-version = "py39"
+line-length = 100
+
+[lint]
+# pyflakes (F) + pycodestyle errors (E) + isort (I). Conservative on purpose.
+select = ["E", "F", "I"]
+
+[lint.per-file-ignores]
+"**/tests/**" = ["E501"]
