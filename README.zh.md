@@ -133,4 +133,23 @@ reports/run1/
 
 详细文档：[`stability_auto_test/README.md`](stability_auto_test/README.md)
 
+---
+
+## 报告预览 — stability_auto_test
+
+### 告警总结 · 事件类型计数 · 运行时间轴
+![SAT Overview](docs/screenshots/sat_overview.png)
+
+告警栏用一句话总结跑测结果（"3 次 Crash + 2 次 ANR"），四个计数卡片分类展示各事件数量并给出一行摘要提示。下方 Plotly 时间轴将每个事件按独立泳道排布，与生命周期标记（新增 / 重启 / 消失）和书签线交织显示。
+
+### 事件列表 + 崩溃详情（异常类 + 调用栈）
+![SAT Incidents](docs/screenshots/sat_incidents.png)
+
+按事件类型、严重级别、进程名或关键字自由筛选。主从面板右侧展示异常类（可点击跳转）、数据来源（logcat / dropbox）、设备时间戳、摘要，以及完整 Java / Native 调用栈——业务包帧以amber色高亮。证据文件（logcat 切片、tombstone、ANR trace）均可直接点击查看。
+
+### 进程稳定性总表
+![SAT Process table](docs/screenshots/sat_process_table.png)
+
+每个进程显示在线率进度条（绿色 → 橙色随在线率下降）、重启次数，以及各事件类型的计数 chip，点击 chip 可直接跳转到对应筛选后的事件列表。
+
 

@@ -132,3 +132,22 @@ reports/run1/
 ```
 
 Full docs: [`stability_auto_test/README.md`](stability_auto_test/README.md)
+
+---
+
+## Report preview — stability_auto_test
+
+### Verdict · event type counters · run timeline
+![SAT Overview](docs/screenshots/sat_overview.png)
+
+Verdict bar summarises the run in plain English ("3 crashes and 2 ANRs detected"). Four counters break down events by type — Java crash, Native crash, ANR, process death — with a one-line hint per type. The Plotly event timeline below places every incident on a dedicated lane, interleaved with lifecycle markers (new / restart / gone) and bookmark lines.
+
+### Incident list + crash detail (Java exception + stack trace)
+![SAT Incidents](docs/screenshots/sat_incidents.png)
+
+Filter by event type, severity, process, or free-text search. The master-detail panel shows exception class (highlighted as a link), source (logcat / dropbox), device timestamp, a one-line summary, and the full Java or native stack with business-package frames highlighted in amber. Evidence files (logcat slice, tombstone, ANR trace) are linked directly.
+
+### Process stability table
+![SAT Process table](docs/screenshots/sat_process_table.png)
+
+Per-process uptime bar (green → orange as uptime drops), restart count, and per-type event counts as clickable chips that jump straight to the filtered incident list.
