@@ -4,12 +4,12 @@
 
 两个独立的 Python + adb 工具，对 Android APK 进行自动化测试——无需修改 App，无需 root，无需可调试版本。两个工具均可自动采集现场证据，并输出结构化的、对 AI 友好的报告。
 
-| 工具 | 监控目标 | 采集的证据 |
-|---|---|---|
-| **perf_auto_test** | CPU 飙升 · 内存增长 · 超阈值 | 线程快照 · 堆转储 · Plotly 时序图 |
-| **stability_auto_test** | Java Crash · Native Crash · ANR · 进程异常退出 | Logcat 切片 · tombstone · ANR trace · 事件时间轴 |
+| 工具 | 监控目标 | 采集的证据 | 使用方式 |
+|---|---|---|---|
+| **perf_auto_test** | CPU 飙升 · 内存增长 · 超阈值 | 线程快照 · 堆转储 · Plotly 时序图 | CLI · Python 库 · Skill |
+| **stability_auto_test** | Java Crash · Native Crash · ANR · 进程异常退出 | Logcat 切片 · tombstone · ANR trace · 事件时间轴 | CLI · Python 库 · Skill |
 
-两个工具均**包名无关**（只需提供包名，自动发现所有进程）、**无侵入**（纯 adb，设备上无需安装任何东西）、**长跑稳定**（文件按小时滚动，adb 断线自动重连退避，已验证 1 h–24 h 连续跑测）。支持三种接入方式：独立 CLI、Python 库（嵌入现有测试框架）和 Claude Code Skill（自然语言触发）。
+两个工具均**包名无关**（只需提供包名，自动发现所有进程）、**无侵入**（纯 adb，设备上无需安装任何东西）、**长跑稳定**（文件按小时滚动，adb 断线自动重连退避，已验证 1 h–24 h 连续跑测）。
 
 ---
 

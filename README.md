@@ -4,12 +4,12 @@
 
 Two independent Python + adb tools that automate Android APK testing — no app modification, no root, no debuggable build required. Both capture evidence automatically and produce structured, AI-readable reports.
 
-| Tool | What it monitors | Evidence captured |
-|---|---|---|
-| **perf_auto_test** | CPU spikes · memory growth · threshold breaches | Thread snapshots · heap dumps · Plotly time-series charts |
-| **stability_auto_test** | Java crash · Native crash · ANR · process death | Logcat slices · tombstones · ANR traces · event timeline |
+| Tool | What it monitors | Evidence captured | Usage |
+|---|---|---|---|
+| **perf_auto_test** | CPU spikes · memory growth · threshold breaches | Thread snapshots · heap dumps · Plotly time-series charts | CLI · Python lib · Skill |
+| **stability_auto_test** | Java crash · Native crash · ANR · process death | Logcat slices · tombstones · ANR traces · event timeline | CLI · Python lib · Skill |
 
-Both tools are **package-agnostic** (supply a package name, they find all processes), **non-invasive** (pure adb, nothing installed on device), and **long-run stable** (hourly rolling files, adb reconnect with backoff, tested at 1 h–24 h). They support three usage modes: standalone CLI, Python library (embed in an existing test framework), and Claude Code Skill (natural-language trigger).
+Both tools are **package-agnostic** (supply a package name, they find all processes), **non-invasive** (pure adb, nothing installed on device), and **long-run stable** (hourly rolling files, adb reconnect with backoff, tested at 1 h–24 h).
 
 ---
 
