@@ -18,8 +18,27 @@
 - **包名无关** — 任意第三方 App / 系统服务，只需知道包名
 - **无侵入** — 不修改 APK，不需要 root，不需要可调试版本
 - **长跑稳定** — CSV/LOG 按小时滚动，adb 抖动自动重试，支持 1 h–24 h 不间断跑测
-- **三种模式** — 独立 CLI 运行 / Python 库嵌入现有测试框架 /通过 AI skill 调用
+- **三种模式** — 独立 CLI 运行 / Python 库嵌入现有测试框架 / 通过 AI Skill 调用
 - **AI 友好** — 结构化 `report.json` + 交互式 `report.html`（Plotly）
+
+---
+
+## 报告预览 — perf_auto_test
+
+### 告警总结 · KPI 卡片 · 运行时间轴
+![Overview](docs/screenshots/overview.png)
+
+一屏看清测试结果：顶部告警栏（正常 / 超阈详情）、六个 KPI 卡片（监控进程数、CPU 峰值 / p95、内存峰值、告警次数、生命周期事件），以及交互式运行时间轴。鼠标悬停告警标记（×）或生命周期圆点可弹出详情浮框，点击告警标记可直跳对应的事件详情。
+
+### 告警事件列表 + 单条证据详情
+![Incidents](docs/screenshots/incidents.png)
+
+按类型过滤（CPU 超阈 / 内存超阈），支持按进程名或事件 ID 搜索。主从布局右侧展示触发值、峰值、持续时长，以及——CPU 告警显示触发时刻 Top 线程占比条形图，内存告警显示 `dumpsys meminfo` 内存分类分布。
+
+### CPU & 内存时序图（Plotly 交互）
+![Charts](docs/screenshots/charts.png)
+
+每个被监控进程独立曲线：CPU%（单核归一化）和内存 PSS（MB）。红色虚线为告警阈值，告警标记直接叠加在数据曲线上，点击标记跳转到对应事件详情。
 
 ---
 

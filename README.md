@@ -23,6 +23,25 @@ Both tools share the same design principles:
 
 ---
 
+## Report preview — perf_auto_test
+
+### Verdict bar · KPI cards · run timeline
+![Overview](docs/screenshots/overview.png)
+
+At-a-glance verdict (all-clear or breach details), six KPI cards (processes monitored, CPU peak / p95, memory peak, incident count, lifecycle events), and an interactive run timeline. Incident markers (×) and lifecycle dots are hoverable for instant popovers; clicking an incident marker jumps straight to its detail.
+
+### Incident list + per-incident deep-dive
+![Incidents](docs/screenshots/incidents.png)
+
+Filter by type (CPU threshold / memory threshold), search by process or incident ID. The master-detail panel shows trigger value, peak, time above threshold, and — depending on type — either the top CPU threads with usage bars or the memory category breakdown from `dumpsys meminfo`.
+
+### CPU & memory time-series (Plotly)
+![Charts](docs/screenshots/charts.png)
+
+Interactive Plotly charts for every monitored process: CPU% (single-core normalised) and memory PSS in MB. Red dashed threshold lines and incident markers overlay directly on the data. Click any marker to jump to its incident detail.
+
+---
+
 ## Requirements
 
 - Python 3.9+
