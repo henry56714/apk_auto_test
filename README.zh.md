@@ -77,37 +77,16 @@
 - `adb` 可用（`adb devices` 能看到目标设备）
 - 目标 App 已在设备上运行
 
-### 方式一：独立 CLI
+### 方式一：Claude Code Skill
 
-最直接的用法，安装依赖后在终端运行：
+在 Claude Code 中用自然语言触发，Claude 自动执行、打开报告并输出总结：
 
-**perf_auto_test**
-
-```bash
-cd perf_auto_test/scripts
-pip install -r requirements-dev.txt
-
-python -m pat \
-  --package com.example.app \
-  --duration 30m \
-  --cpu-threshold-percent 60 \
-  --mem-threshold-pss-mb 400 \
-  --output ./reports/run1
+```
+/perf-auto-test com.example.app 30m
+/stability-auto-test com.example.app 1h
 ```
 
-**stability_auto_test**
-
-```bash
-cd stability_auto_test/scripts
-pip install -r requirements-dev.txt
-
-python -m sat \
-  --package com.example.app \
-  --duration 30m \
-  --output ./reports/run1
-```
-
-> stability_auto_test 不负责启动 App——目标进程须在工具启动前已在运行。
+Skill 定义：[`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
 
 ### 方式二：Python 库
 
@@ -145,16 +124,37 @@ with StabilityTest(cfg) as t:
 # t.result 即完整的 report.json 数据
 ```
 
-### 方式三：Claude Code Skill
+### 方式三：独立 CLI
 
-在 Claude Code 中用自然语言触发，Claude 自动执行、打开报告并输出总结：
+安装依赖后在终端直接运行：
 
+**perf_auto_test**
+
+```bash
+cd perf_auto_test/scripts
+pip install -r requirements-dev.txt
+
+python -m pat \
+  --package com.example.app \
+  --duration 30m \
+  --cpu-threshold-percent 60 \
+  --mem-threshold-pss-mb 400 \
+  --output ./reports/run1
 ```
-/perf-auto-test com.example.app 30m
-/stability-auto-test com.example.app 1h
+
+**stability_auto_test**
+
+```bash
+cd stability_auto_test/scripts
+pip install -r requirements-dev.txt
+
+python -m sat \
+  --package com.example.app \
+  --duration 30m \
+  --output ./reports/run1
 ```
 
-Skill 定义：[`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
+> stability_auto_test 不负责启动 App——目标进程须在工具启动前已在运行。
 
 ### 产物目录
 

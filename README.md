@@ -77,37 +77,16 @@ Per-process uptime bar (green → orange as uptime falls), restart count, and pe
 - `adb` in PATH (`adb devices` shows the target device)
 - Target app already running on device
 
-### Option 1 — Standalone CLI
+### Option 1 — Claude Code Skill
 
-Install dependencies and run directly from the terminal:
+Trigger from Claude Code with natural language. Claude runs the test, opens the report, and returns a structured summary:
 
-**perf_auto_test**
-
-```bash
-cd perf_auto_test/scripts
-pip install -r requirements-dev.txt
-
-python -m pat \
-  --package com.example.app \
-  --duration 30m \
-  --cpu-threshold-percent 60 \
-  --mem-threshold-pss-mb 400 \
-  --output ./reports/run1
+```
+/perf-auto-test com.example.app 30m
+/stability-auto-test com.example.app 1h
 ```
 
-**stability_auto_test**
-
-```bash
-cd stability_auto_test/scripts
-pip install -r requirements-dev.txt
-
-python -m sat \
-  --package com.example.app \
-  --duration 30m \
-  --output ./reports/run1
-```
-
-> stability_auto_test monitors a running app — it does not launch it. The target process must already be running before the tool starts.
+Skill definitions: [`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
 
 ### Option 2 — Python library
 
@@ -145,16 +124,37 @@ with StabilityTest(cfg) as t:
 # t.result holds the full report.json data
 ```
 
-### Option 3 — Claude Code Skill
+### Option 3 — Standalone CLI
 
-Trigger from Claude Code with natural language. Claude runs the test, opens the report, and returns a structured summary:
+Install dependencies and run directly from the terminal:
 
+**perf_auto_test**
+
+```bash
+cd perf_auto_test/scripts
+pip install -r requirements-dev.txt
+
+python -m pat \
+  --package com.example.app \
+  --duration 30m \
+  --cpu-threshold-percent 60 \
+  --mem-threshold-pss-mb 400 \
+  --output ./reports/run1
 ```
-/perf-auto-test com.example.app 30m
-/stability-auto-test com.example.app 1h
+
+**stability_auto_test**
+
+```bash
+cd stability_auto_test/scripts
+pip install -r requirements-dev.txt
+
+python -m sat \
+  --package com.example.app \
+  --duration 30m \
+  --output ./reports/run1
 ```
 
-Skill definitions: [`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
+> stability_auto_test monitors a running app — it does not launch it. The target process must already be running before the tool starts.
 
 ### Output layout
 
