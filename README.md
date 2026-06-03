@@ -9,7 +9,7 @@ Two independent Python + adb tools that automate Android APK testing — no app 
 | **perf_auto_test** | CPU spikes · memory growth · threshold breaches | Thread snapshots · heap dumps · Plotly time-series charts |
 | **stability_auto_test** | Java crash · Native crash · ANR · process death | Logcat slices · tombstones · ANR traces · event timeline |
 
-Both tools are **package-agnostic** (supply a package name, they find all processes), **non-invasive** (pure adb, nothing installed on device), and **long-run stable** (hourly rolling files, adb reconnect with backoff, tested at 1 h–24 h).
+Both tools are **package-agnostic** (supply a package name, they find all processes), **non-invasive** (pure adb, nothing installed on device), and **long-run stable** (hourly rolling files, adb reconnect with backoff, tested at 1 h–24 h). They support three usage modes: standalone CLI, Python library (embed in an existing test framework), and Claude Code Skill (natural-language trigger).
 
 ---
 
@@ -20,19 +20,6 @@ Every test run produces two files:
 **`report.json`** is the authoritative output — schema-validated (JSON Schema Draft-07), versioned, and structured for downstream consumption. It includes run metadata, per-process statistics, and for every incident: trigger value, peak, duration, evidence file paths, and a plain-English summary. Feed it directly to an LLM, a CI script, or a custom dashboard.
 
 **`report.html`** is the human companion — a single self-contained file with Plotly interactive charts, a filterable master-detail incident panel, and hover popovers. No server, no build step.
-
-### Claude Code Skill
-
-Both tools ship as **Claude Code Skills**. One command starts the test, opens the report, and returns a structured summary:
-
-```
-/perf-auto-test com.example.app 30m
-/stability-auto-test com.example.app 1h
-```
-
-Claude handles execution, streams progress, and at the end summarises findings from `report.json` — ready to paste into a bug report or hand off to another agent.
-
-Skill definitions: [`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
 
 ---
 
@@ -82,15 +69,19 @@ Per-process uptime bar (green → orange as uptime falls), restart count, and pe
 
 ---
 
-## Technical details
+## Usage
 
-### Requirements
+### Prerequisites
 
 - Python 3.9+
 - `adb` in PATH (`adb devices` shows the target device)
 - Target app already running on device
 
-### perf_auto_test
+### Option 1 — Standalone CLI
+
+Install dependencies and run directly from the terminal:
+
+**perf_auto_test**
 
 ```bash
 cd perf_auto_test/scripts
@@ -104,6 +95,71 @@ python -m pat \
   --output ./reports/run1
 ```
 
+**stability_auto_test**
+
+```bash
+cd stability_auto_test/scripts
+pip install -r requirements-dev.txt
+
+python -m sat \
+  --package com.example.app \
+  --duration 30m \
+  --output ./reports/run1
+```
+
+> stability_auto_test monitors a running app — it does not launch it. The target process must already be running before the tool starts.
+
+### Option 2 — Python library
+
+Use the `with`-statement API to embed either tool in an existing test framework:
+
+**perf_auto_test**
+
+```python
+from pat import PerfConfig, PerfTest
+
+cfg = PerfConfig(
+    package="com.example.app",
+    duration_sec=1800,
+    output_dir="./reports/run1",
+    cpu_threshold_percent=60,
+    mem_threshold_pss_mb=400,
+)
+with PerfTest(cfg) as t:
+    t.run()
+# t.result holds the full report.json data
+```
+
+**stability_auto_test**
+
+```python
+from sat import StabilityConfig, StabilityTest
+
+cfg = StabilityConfig(
+    package="com.example.app",
+    duration_sec=1800,
+    output_dir="./reports/run1",
+)
+with StabilityTest(cfg) as t:
+    t.run()
+# t.result holds the full report.json data
+```
+
+### Option 3 — Claude Code Skill
+
+Trigger from Claude Code with natural language. Claude runs the test, opens the report, and returns a structured summary:
+
+```
+/perf-auto-test com.example.app 30m
+/stability-auto-test com.example.app 1h
+```
+
+Skill definitions: [`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
+
+### Output layout
+
+**perf_auto_test**
+
 ```
 reports/run1/
 ├── report.json         ← authoritative result (AI / CI readable)
@@ -115,21 +171,7 @@ reports/run1/
     └── ...
 ```
 
-Full docs: [`perf_auto_test/README.md`](perf_auto_test/README.md)
-
-### stability_auto_test
-
-> This tool monitors a running app — it does not launch it. The target process must already be running before the tool starts.
-
-```bash
-cd stability_auto_test/scripts
-pip install -r requirements-dev.txt
-
-python -m sat \
-  --package com.example.app \
-  --duration 30m \
-  --output ./reports/run1
-```
+**stability_auto_test**
 
 ```
 reports/run1/
@@ -145,4 +187,4 @@ reports/run1/
     └── ...
 ```
 
-Full docs: [`stability_auto_test/README.md`](stability_auto_test/README.md)
+Full docs: [`perf_auto_test/README.md`](perf_auto_test/README.md) · [`stability_auto_test/README.md`](stability_auto_test/README.md)

@@ -9,7 +9,7 @@
 | **perf_auto_test** | CPU 飙升 · 内存增长 · 超阈值 | 线程快照 · 堆转储 · Plotly 时序图 |
 | **stability_auto_test** | Java Crash · Native Crash · ANR · 进程异常退出 | Logcat 切片 · tombstone · ANR trace · 事件时间轴 |
 
-两个工具均**包名无关**（只需提供包名，自动发现所有进程）、**无侵入**（纯 adb，设备上无需安装任何东西）、**长跑稳定**（文件按小时滚动，adb 断线自动重连退避，已验证 1 h–24 h 连续跑测）。
+两个工具均**包名无关**（只需提供包名，自动发现所有进程）、**无侵入**（纯 adb，设备上无需安装任何东西）、**长跑稳定**（文件按小时滚动，adb 断线自动重连退避，已验证 1 h–24 h 连续跑测）。支持三种接入方式：独立 CLI、Python 库（嵌入现有测试框架）和 Claude Code Skill（自然语言触发）。
 
 ---
 
@@ -20,19 +20,6 @@
 **`report.json`** 是权威输出——经 JSON Schema Draft-07 验证、有版本号、为下游消费设计。包含跑测元数据、各进程统计，以及每条 incident 的触发值、峰值、持续时长、证据文件路径和一句话摘要。可直接送入 LLM、CI 脚本或自定义看板分析。
 
 **`report.html`** 是人看的配套报告——单一自包含文件，内嵌 Plotly 交互图表、可过滤的主从 incident 面板和悬浮详情框。无需服务器，无需构建。
-
-### Claude Code Skill
-
-两个工具均提供 **Claude Code Skill**，一条指令即可完成跑测、打开报告并返回结构化总结：
-
-```
-/perf-auto-test com.example.app 30m
-/stability-auto-test com.example.app 1h
-```
-
-Claude 全程处理执行、进度输出，测试结束后从 `report.json` 提炼发现结论——可直接粘贴到 Bug 报告，或交由下一个 Agent 处理。
-
-Skill 定义：[`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
 
 ---
 
@@ -82,15 +69,19 @@ Skill 定义：[`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stabili
 
 ---
 
-## 技术细节
+## 使用方式
 
-### 环境要求
+### 环境准备
 
 - Python 3.9+
 - `adb` 可用（`adb devices` 能看到目标设备）
 - 目标 App 已在设备上运行
 
-### perf_auto_test
+### 方式一：独立 CLI
+
+最直接的用法，安装依赖后在终端运行：
+
+**perf_auto_test**
 
 ```bash
 cd perf_auto_test/scripts
@@ -104,6 +95,71 @@ python -m pat \
   --output ./reports/run1
 ```
 
+**stability_auto_test**
+
+```bash
+cd stability_auto_test/scripts
+pip install -r requirements-dev.txt
+
+python -m sat \
+  --package com.example.app \
+  --duration 30m \
+  --output ./reports/run1
+```
+
+> stability_auto_test 不负责启动 App——目标进程须在工具启动前已在运行。
+
+### 方式二：Python 库
+
+以 `with` 语句嵌入现有测试框架，与自动化用例串联：
+
+**perf_auto_test**
+
+```python
+from pat import PerfConfig, PerfTest
+
+cfg = PerfConfig(
+    package="com.example.app",
+    duration_sec=1800,
+    output_dir="./reports/run1",
+    cpu_threshold_percent=60,
+    mem_threshold_pss_mb=400,
+)
+with PerfTest(cfg) as t:
+    t.run()
+# t.result 即完整的 report.json 数据
+```
+
+**stability_auto_test**
+
+```python
+from sat import StabilityConfig, StabilityTest
+
+cfg = StabilityConfig(
+    package="com.example.app",
+    duration_sec=1800,
+    output_dir="./reports/run1",
+)
+with StabilityTest(cfg) as t:
+    t.run()
+# t.result 即完整的 report.json 数据
+```
+
+### 方式三：Claude Code Skill
+
+在 Claude Code 中用自然语言触发，Claude 自动执行、打开报告并输出总结：
+
+```
+/perf-auto-test com.example.app 30m
+/stability-auto-test com.example.app 1h
+```
+
+Skill 定义：[`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
+
+### 产物目录
+
+**perf_auto_test**
+
 ```
 reports/run1/
 ├── report.json         ← 权威结果（AI / CI 可直接读）
@@ -115,21 +171,7 @@ reports/run1/
     └── ...
 ```
 
-详细文档：[`perf_auto_test/README.md`](perf_auto_test/README.md)
-
-### stability_auto_test
-
-> 本工具监控已在运行的 App，不负责启动——目标进程须在工具启动前已在运行。
-
-```bash
-cd stability_auto_test/scripts
-pip install -r requirements-dev.txt
-
-python -m sat \
-  --package com.example.app \
-  --duration 30m \
-  --output ./reports/run1
-```
+**stability_auto_test**
 
 ```
 reports/run1/
@@ -145,4 +187,4 @@ reports/run1/
     └── ...
 ```
 
-详细文档：[`stability_auto_test/README.md`](stability_auto_test/README.md)
+详细文档：[`perf_auto_test/README.md`](perf_auto_test/README.md) · [`stability_auto_test/README.md`](stability_auto_test/README.md)
