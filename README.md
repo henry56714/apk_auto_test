@@ -2,72 +2,95 @@
 
 **[中文](README.zh.md)** | **English**
 
-> Two independent Python + adb tools for automated Android APK testing — no app modification, no root required.
+Two independent Python + adb tools that automate Android APK testing — no app modification, no root, no debuggable build required. Both capture evidence automatically and produce structured, AI-readable reports.
+
+| Tool | What it monitors | Evidence captured |
+|---|---|---|
+| **perf_auto_test** | CPU spikes · memory growth · threshold breaches | Thread snapshots · heap dumps · Plotly time-series charts |
+| **stability_auto_test** | Java crash · Native crash · ANR · process death | Logcat slices · tombstones · ANR traces · event timeline |
+
+Both tools are **package-agnostic** (supply a package name, they find all processes), **non-invasive** (pure adb, nothing installed on device), and **long-run stable** (hourly rolling files, adb reconnect with backoff, tested at 1 h–24 h).
 
 ---
 
-## Tools at a glance
+## AI-ready output
 
-| Tool | What it detects | Module | Path |
-|---|---|---|---|
-| **perf_auto_test** | CPU spikes · memory leaks · threshold breaches | `pat` | `perf_auto_test/` |
-| **stability_auto_test** | Java crash · Native crash · ANR · process death | `sat` | `stability_auto_test/` |
+Every test run produces two files:
 
-Both tools share the same design principles:
+**`report.json`** is the authoritative output — schema-validated (JSON Schema Draft-07), versioned, and structured for downstream consumption. It includes run metadata, per-process statistics, and for every incident: trigger value, peak, duration, evidence file paths, and a plain-English summary. Feed it directly to an LLM, a CI script, or a custom dashboard.
 
-- **Package-agnostic** — any third-party app or system service, just the package name
-- **Non-invasive** — no APK modification, no root, no debuggable build required
-- **Long-run stable** — hourly rolling CSV/log, adb retry with backoff, handles 1 h–24 h runs
-- **Three modes** — standalone CLI / Python library embedded in a larger test framework / Claude Code Skill
-- **AI-ready** — structured `report.json` + interactive `report.html` (Plotly)
+**`report.html`** is the human companion — a single self-contained file with Plotly interactive charts, a filterable master-detail incident panel, and hover popovers. No server, no build step.
 
----
+### Claude Code Skill
 
-## Report preview — perf_auto_test
-
-### Verdict bar · KPI cards · run timeline
-![Overview](docs/screenshots/overview.png)
-
-At-a-glance verdict (all-clear or breach details), six KPI cards (processes monitored, CPU peak / p95, memory peak, incident count, lifecycle events), and an interactive run timeline. Incident markers (×) and lifecycle dots are hoverable for instant popovers; clicking an incident marker jumps straight to its detail.
-
-### Incident list + per-incident deep-dive
-![Incidents](docs/screenshots/incidents.png)
-
-Filter by type (CPU threshold / memory threshold), search by process or incident ID. The master-detail panel shows trigger value, peak, time above threshold, and — depending on type — either the top CPU threads with usage bars or the memory category breakdown from `dumpsys meminfo`.
-
-### CPU & memory time-series (Plotly)
-![Charts](docs/screenshots/charts.png)
-
-Interactive Plotly charts for every monitored process: CPU% (single-core normalised) and memory PSS in MB. Red dashed threshold lines and incident markers overlay directly on the data. Click any marker to jump to its incident detail.
-
----
-
-## Requirements
-
-- Python 3.9+
-- `adb` available in PATH (`adb devices` shows the target device)
-- Target app already running on device
-
----
-
-## Claude Code Skill integration
-
-Both tools ship as **Claude Code Skills** — trigger them with natural language inside Claude Code:
+Both tools ship as **Claude Code Skills**. One command starts the test, opens the report, and returns a structured summary:
 
 ```
 /perf-auto-test com.example.app 30m
 /stability-auto-test com.example.app 1h
 ```
 
-Claude handles execution, opens the HTML report, and outputs a structured test summary.
+Claude handles execution, streams progress, and at the end summarises findings from `report.json` — ready to paste into a bug report or hand off to another agent.
 
 Skill definitions: [`perf_auto_test/SKILL.md`](perf_auto_test/SKILL.md) · [`stability_auto_test/SKILL.md`](stability_auto_test/SKILL.md)
 
 ---
 
-## perf_auto_test — Performance Monitoring
+## Report preview
 
-Auto-discovers all processes for a given package, collects CPU% and memory PSS in parallel, triggers automatic dumps (thread snapshot / heap dump) when thresholds are breached.
+### perf_auto_test
+
+**Verdict · KPI cards · run timeline**
+
+![Overview](docs/screenshots/overview.png)
+
+One-screen verdict (all-clear or breach details), six KPI cards (processes monitored, CPU peak / p95, memory peak, incident count, lifecycle events), and an interactive run timeline. Hover any incident marker (×) for an instant detail popover; click to jump to the incident panel.
+
+**Incident list + per-incident deep-dive**
+
+![Incidents](docs/screenshots/incidents.png)
+
+Filter by type (CPU threshold / memory threshold) or search by process name and ID. The detail panel shows trigger value, peak, time above threshold, and — depending on type — top CPU threads with usage bars or memory category breakdown from `dumpsys meminfo`.
+
+**CPU & memory time-series charts**
+
+![Charts](docs/screenshots/charts.png)
+
+Plotly charts for every monitored process: CPU% (single-core normalised) and memory PSS in MB. Red dashed threshold lines and incident markers overlay directly on the curves. Click any marker to jump to its incident detail.
+
+---
+
+### stability_auto_test
+
+**Verdict · event type counters · event timeline**
+
+![SAT Overview](docs/screenshots/sat_overview.png)
+
+Verdict bar in plain English ("3 crashes and 2 ANRs detected"). Four counters break events down by type with a one-line hint each. The Plotly timeline has seven lanes — four event types and three lifecycle states — with bookmark lines overlaid.
+
+**Incident list + crash detail (stack trace)**
+
+![SAT Incidents](docs/screenshots/sat_incidents.png)
+
+Filter by event type, severity, process, or free text. The detail panel shows exception class, source (logcat / dropbox), device timestamp, one-line summary, and the full Java or native stack — business-package frames highlighted in amber. Evidence files (logcat slice, tombstone, ANR trace) are linked directly.
+
+**Process stability table**
+
+![SAT Process table](docs/screenshots/sat_process_table.png)
+
+Per-process uptime bar (green → orange as uptime falls), restart count, and per-type event counts as clickable chips that filter the incident list instantly.
+
+---
+
+## Technical details
+
+### Requirements
+
+- Python 3.9+
+- `adb` in PATH (`adb devices` shows the target device)
+- Target app already running on device
+
+### perf_auto_test
 
 ```bash
 cd perf_auto_test/scripts
@@ -81,12 +104,10 @@ python -m pat \
   --output ./reports/run1
 ```
 
-**Output**
-
 ```
 reports/run1/
 ├── report.json         ← authoritative result (AI / CI readable)
-├── report.html         ← Plotly interactive charts (CPU / Mem / lifecycle)
+├── report.html         ← Plotly interactive charts
 ├── *.csv               ← raw time-series, hourly rotation
 └── incidents/
     ├── cpu_<ts>_<proc>_pid<n>.json   ← top-N threads + trigger metadata
@@ -96,13 +117,9 @@ reports/run1/
 
 Full docs: [`perf_auto_test/README.md`](perf_auto_test/README.md)
 
----
+### stability_auto_test
 
-## stability_auto_test — Stability Monitoring
-
-Streams logcat and polls dropbox in parallel, captures Java/Native crash, ANR, and process-death events, saves incident snapshots (logcat slice + tombstone/ANR trace), and produces a structured report with an interactive event timeline.
-
-> **Note**: This tool does not launch the app — the target process must already be running.
+> This tool monitors a running app — it does not launch it. The target process must already be running before the tool starts.
 
 ```bash
 cd stability_auto_test/scripts
@@ -114,8 +131,6 @@ python -m sat \
   --output ./reports/run1
 ```
 
-**Output**
-
 ```
 reports/run1/
 ├── report.json               ← authoritative result (AI / CI readable)
@@ -124,30 +139,10 @@ reports/run1/
 ├── lifecycle_*.csv           ← process lifecycle, hourly rotation
 ├── logcat_*.log              ← raw logcat, hourly rotation
 └── incidents/
-    ├── java_crash_<ts>_<proc>_pid<n>.txt   ← logcat slice (human-readable)
-    ├── java_crash_<ts>_<proc>_pid<n>.json  ← exception class + top frames + metadata
+    ├── java_crash_<ts>_<proc>_pid<n>.json  ← exception class + frames + metadata
     ├── native_crash_<ts>_<proc>_pid<n>.tombstone  (when accessible)
     ├── anr_<ts>_<proc>_pid<n>.trace               (when accessible)
     └── ...
 ```
 
 Full docs: [`stability_auto_test/README.md`](stability_auto_test/README.md)
-
----
-
-## Report preview — stability_auto_test
-
-### Verdict · event type counters · run timeline
-![SAT Overview](docs/screenshots/sat_overview.png)
-
-Verdict bar summarises the run in plain English ("3 crashes and 2 ANRs detected"). Four counters break down events by type — Java crash, Native crash, ANR, process death — with a one-line hint per type. The Plotly event timeline below places every incident on a dedicated lane, interleaved with lifecycle markers (new / restart / gone) and bookmark lines.
-
-### Incident list + crash detail (Java exception + stack trace)
-![SAT Incidents](docs/screenshots/sat_incidents.png)
-
-Filter by event type, severity, process, or free-text search. The master-detail panel shows exception class (highlighted as a link), source (logcat / dropbox), device timestamp, a one-line summary, and the full Java or native stack with business-package frames highlighted in amber. Evidence files (logcat slice, tombstone, ANR trace) are linked directly.
-
-### Process stability table
-![SAT Process table](docs/screenshots/sat_process_table.png)
-
-Per-process uptime bar (green → orange as uptime drops), restart count, and per-type event counts as clickable chips that jump straight to the filtered incident list.
