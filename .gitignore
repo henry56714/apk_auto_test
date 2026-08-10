@@ -27,3 +27,6 @@ stability_auto_test/reports
 # 临时文件
 tmp/
 *.log
+
+# claude 文件
+.claude/
