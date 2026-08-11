@@ -91,9 +91,7 @@ def _setup_logging(quiet: bool, log_json: bool, verbose: bool) -> None:
     if log_json:
         handler.setFormatter(_JsonFormatter())
     else:
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s %(levelname)s %(name)s: %(message)s"
-        ))
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level)
@@ -104,6 +102,7 @@ def _load_yaml(path: Optional[Path]) -> Dict[str, Any]:
     if path is None:
         return {}
     import yaml
+
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
@@ -148,23 +147,26 @@ def _flatten_yaml(data: Dict[str, Any]) -> Dict[str, Any]:
     if "fd_growth_threshold" in resource_risk:
         out["resource_fd_growth_threshold"] = resource_risk["fd_growth_threshold"]
     if "thread_growth_threshold" in resource_risk:
-        out["resource_thread_growth_threshold"] = (
-            resource_risk["thread_growth_threshold"]
-        )
+        out["resource_thread_growth_threshold"] = resource_risk["thread_growth_threshold"]
     detection = data.get("detection", {}) or {}
-    for k in ("enable_java_crash", "enable_native_crash",
-              "enable_anr", "enable_process_death"):
+    for k in ("enable_java_crash", "enable_native_crash", "enable_anr", "enable_process_death"):
         if k in detection:
             out[k] = detection[k]
     if "dedup_window_sec" in detection:
         out["dedup_window_sec"] = detection["dedup_window_sec"]
 
     dumps = data.get("dumps", {}) or {}
-    for k in ("pre_context_sec", "post_context_sec",
-              "max_incidents_per_type", "dump_shutdown_timeout_sec",
-              "context_retention_sec", "context_buffer_max_lines",
-              "context_buffer_max_bytes",
-              "pull_tombstone", "pull_anr_trace"):
+    for k in (
+        "pre_context_sec",
+        "post_context_sec",
+        "max_incidents_per_type",
+        "dump_shutdown_timeout_sec",
+        "context_retention_sec",
+        "context_buffer_max_lines",
+        "context_buffer_max_bytes",
+        "pull_tombstone",
+        "pull_anr_trace",
+    ):
         if k in dumps:
             out[k] = dumps[k]
 
@@ -173,16 +175,20 @@ def _flatten_yaml(data: Dict[str, Any]) -> Dict[str, Any]:
         out["min_coverage_ratio"] = health["min_coverage_ratio"]
 
     diagnosis = data.get("diagnosis", {}) or {}
-    for k in ("mapping_file", "retrace_command", "native_symbols_dir",
-              "llvm_symbolizer_path"):
+    for k in ("mapping_file", "retrace_command", "native_symbols_dir", "llvm_symbolizer_path"):
         if k in diagnosis:
             out[k] = diagnosis[k]
 
     policy = data.get("policy", {}) or {}
     if "fail_on" in policy:
         out["policy_fail_on"] = list(policy["fail_on"])
-    for k in ("max_process_death", "max_anr", "max_restarts",
-              "min_uptime_ratio", "fail_on_new_regression_only"):
+    for k in (
+        "max_process_death",
+        "max_anr",
+        "max_restarts",
+        "min_uptime_ratio",
+        "fail_on_new_regression_only",
+    ):
         if k in policy:
             out["policy_" + k] = policy[k]
     if "min_coverage_ratio" in policy:
@@ -197,9 +203,14 @@ def _flatten_yaml(data: Dict[str, Any]) -> Dict[str, Any]:
         out["dashboard"] = output["dashboard"]
 
     quota = data.get("quota", {}) or {}
-    for k in ("max_disk_bytes", "max_log_file_bytes", "log_retention_hours",
-              "max_queue_size", "evidence_sample_every_n",
-              "self_monitor_interval_sec"):
+    for k in (
+        "max_disk_bytes",
+        "max_log_file_bytes",
+        "log_retention_hours",
+        "max_queue_size",
+        "evidence_sample_every_n",
+        "self_monitor_interval_sec",
+    ):
         if k in quota:
             out[k] = quota[k]
 
@@ -256,14 +267,12 @@ def build_config(args: argparse.Namespace, yaml_path: Optional[Path]) -> Stabili
         "retrace_command": args.retrace_command,
         "native_symbols_dir": args.native_symbols_dir,
         "llvm_symbolizer_path": args.llvm_symbolizer,
-        "ci_mode": args.ci,
         "policy_fail_on": _parse_csv_list(args.fail_on),
         "policy_max_anr": args.max_anr,
         "policy_max_restarts": args.max_restarts,
         "policy_min_uptime_ratio": args.min_uptime_ratio,
         "device_reboot_policy": args.device_reboot_policy,
         "device_health_interval_sec": args.device_health_interval,
-        "resource_risk_enabled": not args.no_resource_risk,
         "resource_risk_interval_sec": args.resource_risk_interval,
         "resource_fd_growth_threshold": args.resource_fd_threshold,
         "resource_thread_growth_threshold": args.resource_thread_threshold,
@@ -273,17 +282,28 @@ def build_config(args: argparse.Namespace, yaml_path: Optional[Path]) -> Stabili
         "max_queue_size": args.max_queue_size,
         "evidence_sample_every_n": args.evidence_sample_every_n,
         "self_monitor_interval_sec": args.self_monitor_interval,
-        "redact": args.redact,
         "redaction_regexes": list(args.redaction_regex or []),
         "webhook_url": args.webhook_url,
         "webhook_events": args.webhook_event,
         "webhook_rate_limit_sec": args.webhook_rate_limit,
-        "plugins_enabled": args.enable_plugins,
-        "emit_html": not args.no_html,
         "status_interval_sec": args.status_interval,
-        "dashboard": args.dashboard,
     }
-    # Bool disable flags (only set when user passed them).
+    # Boolean flags: only apply when explicitly passed (True ≠ default False).
+    # Positive store_true flags.
+    if args.ci:
+        cli_map["ci_mode"] = True
+    if args.redact:
+        cli_map["redact"] = True
+    if args.dashboard:
+        cli_map["dashboard"] = True
+    if args.enable_plugins:
+        cli_map["plugins_enabled"] = True
+    # Negative store_true flags (user explicitly passed the disable flag).
+    if args.no_html:
+        cli_map["emit_html"] = False
+    if args.no_resource_risk:
+        cli_map["resource_risk_enabled"] = False
+    # Bool disable flags for detection/dumps.
     if args.no_java_crash:
         cli_map["enable_java_crash"] = False
     if args.no_native_crash:
@@ -315,8 +335,8 @@ def build_config(args: argparse.Namespace, yaml_path: Optional[Path]) -> Stabili
 
 
 def _run_matrix_mode(args: argparse.Namespace, cfg: StabilityConfig) -> int:
-    duration_sec = args.duration if args.duration is not None else (
-        profile_duration(args.profile) or 300
+    duration_sec = (
+        args.duration if args.duration is not None else (profile_duration(args.profile) or 300)
     )
     if args.devices == "all":
         adb = Adb(serial=args.device)
@@ -332,6 +352,7 @@ def _run_matrix_mode(args: argparse.Namespace, cfg: StabilityConfig) -> int:
         return EXIT_SETUP
 
     from .matrix import launch_package_on
+
     for device in devices:
         try:
             launch_package_on(device, cfg.package)
@@ -366,215 +387,344 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="stability_auto_test",
         description="Generic Android APK stability auto-test "
-                    "(Java/Native crash + ANR + process death, AI-friendly reports).",
+        "(Java/Native crash + ANR + process death, AI-friendly reports).",
     )
-    p.add_argument("--package", default=None,
-                   help="Target package (required unless set in --config)")
-    p.add_argument("--output", default=None,
-                   help="Output directory (default: ./reports/<pkg>_<YYYYMMDD_HHMMSS>)")
-    p.add_argument("--duration", type=_parse_duration, default=None,
-                   help="Run duration, e.g. 30s, 5m, 1h, 24h "
-                        "(default: 5m or profile default)")
-    p.add_argument("--device", default=None,
-                   help="ADB serial (required if multiple devices)")
-    p.add_argument("--devices", default=None,
-                   help="Comma-separated device serials or 'all' "
-                        "(multi-device matrix mode)")
-    p.add_argument("--profile", choices=["smoke", "soak", "overnight", "automotive"],
-                   default=None,
-                   help="Configuration preset (CLI/YAML still override)")
-    p.add_argument("--print-effective-config", action="store_true",
-                   help="Print the final effective config and sources, then exit")
-    p.add_argument("--config", default=None,
-                   help="Path to YAML config file (CLI flags override its values)")
-    p.add_argument("--config-lenient", action="store_true",
-                   help="Ignore unknown YAML fields (values are still validated)")
+    p.add_argument(
+        "--package", default=None, help="Target package (required unless set in --config)"
+    )
+    p.add_argument(
+        "--output",
+        default=None,
+        help="Output directory (default: ./reports/<pkg>_<YYYYMMDD_HHMMSS>)",
+    )
+    p.add_argument(
+        "--duration",
+        type=_parse_duration,
+        default=None,
+        help="Run duration, e.g. 30s, 5m, 1h, 24h (default: 5m or profile default)",
+    )
+    p.add_argument("--device", default=None, help="ADB serial (required if multiple devices)")
+    p.add_argument(
+        "--devices",
+        default=None,
+        help="Comma-separated device serials or 'all' (multi-device matrix mode)",
+    )
+    p.add_argument(
+        "--profile",
+        choices=["smoke", "soak", "overnight", "automotive"],
+        default=None,
+        help="Configuration preset (CLI/YAML still override)",
+    )
+    p.add_argument(
+        "--print-effective-config",
+        action="store_true",
+        help="Print the final effective config and sources, then exit",
+    )
+    p.add_argument(
+        "--config", default=None, help="Path to YAML config file (CLI flags override its values)"
+    )
+    p.add_argument(
+        "--config-lenient",
+        action="store_true",
+        help="Ignore unknown YAML fields (values are still validated)",
+    )
 
     # Discovery
-    p.add_argument("--wait-timeout", type=float, default=None,
-                   help="Seconds to wait for target process (default: 60)")
-    p.add_argument("--rescan-interval", type=float, default=None,
-                   help="Process re-discovery interval seconds (default: 5)")
-    p.add_argument("--processes", default=None,
-                   help="Comma-separated filter (e.g. ':remote,:push'). Empty = all.")
+    p.add_argument(
+        "--wait-timeout",
+        type=float,
+        default=None,
+        help="Seconds to wait for target process (default: 60)",
+    )
+    p.add_argument(
+        "--rescan-interval",
+        type=float,
+        default=None,
+        help="Process re-discovery interval seconds (default: 5)",
+    )
+    p.add_argument(
+        "--processes",
+        default=None,
+        help="Comma-separated filter (e.g. ':remote,:push'). Empty = all.",
+    )
 
     # Detection
-    p.add_argument("--no-java-crash", action="store_true",
-                   help="Disable Java crash detection")
-    p.add_argument("--no-native-crash", action="store_true",
-                   help="Disable native crash detection")
-    p.add_argument("--no-anr", action="store_true",
-                   help="Disable ANR detection")
-    p.add_argument("--no-process-death", action="store_true",
-                   help="Disable process death detection")
-    p.add_argument("--dedup-window", type=float, default=None,
-                   help="Dedup window seconds for same (process,pid,type) (default: 5)")
+    p.add_argument("--no-java-crash", action="store_true", help="Disable Java crash detection")
+    p.add_argument("--no-native-crash", action="store_true", help="Disable native crash detection")
+    p.add_argument("--no-anr", action="store_true", help="Disable ANR detection")
+    p.add_argument(
+        "--no-process-death", action="store_true", help="Disable process death detection"
+    )
+    p.add_argument(
+        "--dedup-window",
+        type=float,
+        default=None,
+        help="Dedup window seconds for same (process,pid,type) (default: 5)",
+    )
 
     # Dumps
-    p.add_argument("--max-incidents-per-type", type=int, default=None,
-                   help="Cap on incidents written per event type (default: 200)")
-    p.add_argument("--dump-shutdown-timeout", type=float, default=None,
-                   help="Seconds to wait for in-flight incident dumps during "
-                        "stop before marking them timed_out (default: 60)")
-    p.add_argument("--context-retention", type=float, default=None,
-                   help="Logcat context buffer retention seconds "
-                        "(default: pre+post+60)")
-    p.add_argument("--context-buffer-max-lines", type=int, default=None,
-                   help="Max logcat lines kept in the context ring buffer "
-                        "(default: 5000)")
-    p.add_argument("--context-buffer-max-bytes", type=int, default=None,
-                   help="Max bytes kept in the context ring buffer "
-                        "(default: 4194304)")
-    p.add_argument("--min-coverage", type=float, default=None,
-                   help="Minimum logcat coverage ratio for a confident verdict "
-                        "(default: 0.99)")
-    p.add_argument("--mapping-file", default=None,
-                   help="ProGuard/R8 mapping file for Java deobfuscation")
-    p.add_argument("--retrace-command", default=None,
-                   help="Retrace tool command (default: built-in mapping parser)")
-    p.add_argument("--native-symbols-dir", default=None,
-                   help="Directory tree with unstripped .so files")
-    p.add_argument("--llvm-symbolizer", default=None,
-                   help="Path to llvm-symbolizer for native stack symbolization")
-    p.add_argument("--ci", action="store_true",
-                   help="Enable CI gate: exit 1 when policy rules fail")
-    p.add_argument("--fail-on", default=None,
-                   help="Comma-separated event types that fail the gate")
-    p.add_argument("--max-anr", type=int, default=None,
-                   help="Maximum tolerated ANR count (default: 0)")
-    p.add_argument("--max-restarts", type=int, default=None,
-                   help="Maximum tolerated process restarts (default: 0)")
-    p.add_argument("--min-uptime-ratio", type=float, default=None,
-                   help="Minimum per-process uptime ratio (default: 0.99)")
-    p.add_argument("--device-reboot-policy",
-                   choices=["continue", "fail-fast", "wait-and-resume"],
-                   default=None,
-                   help="Device reboot/offline policy (default: wait-and-resume)")
-    p.add_argument("--device-health-interval", type=float, default=None,
-                   help="Device health sampling interval seconds (default: 5)")
-    p.add_argument("--no-resource-risk", action="store_true",
-                   help="Disable FD/thread resource-risk pre-warning")
-    p.add_argument("--resource-risk-interval", type=float, default=None,
-                   help="Resource-risk sampling interval seconds (default: 30)")
-    p.add_argument("--resource-fd-threshold", type=int, default=None,
-                   help="FD growth threshold before a risk event (default: 200)")
-    p.add_argument("--resource-thread-threshold", type=int, default=None,
-                   help="Thread growth threshold (default: 50)")
-    p.add_argument("--max-disk-bytes", type=int, default=None,
-                   help="Hard disk free-space quota; stop big evidence when reached")
-    p.add_argument("--max-log-file-bytes", type=int, default=None,
-                   help="Max bytes per log file before rotation guard (default: 512MiB)")
-    p.add_argument("--log-retention-hours", type=int, default=None,
-                   help="Delete logcat files older than this (default: 24h)")
-    p.add_argument("--max-queue-size", type=int, default=None,
-                   help="Max queued dump tasks (default: 50)")
-    p.add_argument("--evidence-sample-every-n", type=int, default=None,
-                   help="Save full evidence for first and every Nth occurrence "
-                        "(default: 5)")
-    p.add_argument("--self-monitor-interval", type=float, default=None,
-                   help="Tool-self resource sampling interval seconds (default: 60)")
-    p.add_argument("--redact", action="store_true",
-                   help="Apply built-in privacy redaction to reports/logs")
-    p.add_argument("--redaction-regex", action="append", default=None,
-                   help="Extra redaction regex (repeatable)")
-    p.add_argument("--webhook-url", default=None,
-                   help="Generic webhook URL for notifications")
-    p.add_argument("--webhook-event", action="append", default=None,
-                   help="Webhook event type (repeatable; default: all four)")
-    p.add_argument("--webhook-rate-limit", type=float, default=None,
-                   help="Minimum seconds between same-event notifications")
-    p.add_argument("--enable-plugins", action="store_true",
-                   help="Enable installed sat.plugins entry points "
-                        "(default: disabled)")
-    p.add_argument("--no-tombstone-pull", action="store_true",
-                   help="Skip pulling /data/tombstones/ for native crashes")
-    p.add_argument("--no-anr-trace-pull", action="store_true",
-                   help="Skip pulling /data/anr/ for ANRs")
+    p.add_argument(
+        "--max-incidents-per-type",
+        type=int,
+        default=None,
+        help="Cap on incidents written per event type (default: 200)",
+    )
+    p.add_argument(
+        "--dump-shutdown-timeout",
+        type=float,
+        default=None,
+        help="Seconds to wait for in-flight incident dumps during "
+        "stop before marking them timed_out (default: 60)",
+    )
+    p.add_argument(
+        "--context-retention",
+        type=float,
+        default=None,
+        help="Logcat context buffer retention seconds (default: pre+post+60)",
+    )
+    p.add_argument(
+        "--context-buffer-max-lines",
+        type=int,
+        default=None,
+        help="Max logcat lines kept in the context ring buffer (default: 5000)",
+    )
+    p.add_argument(
+        "--context-buffer-max-bytes",
+        type=int,
+        default=None,
+        help="Max bytes kept in the context ring buffer (default: 4194304)",
+    )
+    p.add_argument(
+        "--min-coverage",
+        type=float,
+        default=None,
+        help="Minimum logcat coverage ratio for a confident verdict (default: 0.99)",
+    )
+    p.add_argument(
+        "--mapping-file", default=None, help="ProGuard/R8 mapping file for Java deobfuscation"
+    )
+    p.add_argument(
+        "--retrace-command",
+        default=None,
+        help="Retrace tool command (default: built-in mapping parser)",
+    )
+    p.add_argument(
+        "--native-symbols-dir", default=None, help="Directory tree with unstripped .so files"
+    )
+    p.add_argument(
+        "--llvm-symbolizer",
+        default=None,
+        help="Path to llvm-symbolizer for native stack symbolization",
+    )
+    p.add_argument(
+        "--ci", action="store_true", help="Enable CI gate: exit 1 when policy rules fail"
+    )
+    p.add_argument("--fail-on", default=None, help="Comma-separated event types that fail the gate")
+    p.add_argument(
+        "--max-anr", type=int, default=None, help="Maximum tolerated ANR count (default: 0)"
+    )
+    p.add_argument(
+        "--max-restarts",
+        type=int,
+        default=None,
+        help="Maximum tolerated process restarts (default: 0)",
+    )
+    p.add_argument(
+        "--min-uptime-ratio",
+        type=float,
+        default=None,
+        help="Minimum per-process uptime ratio (default: 0.99)",
+    )
+    p.add_argument(
+        "--device-reboot-policy",
+        choices=["continue", "fail-fast", "wait-and-resume"],
+        default=None,
+        help="Device reboot/offline policy (default: wait-and-resume)",
+    )
+    p.add_argument(
+        "--device-health-interval",
+        type=float,
+        default=None,
+        help="Device health sampling interval seconds (default: 5)",
+    )
+    p.add_argument(
+        "--no-resource-risk",
+        action="store_true",
+        help="Disable FD/thread resource-risk pre-warning",
+    )
+    p.add_argument(
+        "--resource-risk-interval",
+        type=float,
+        default=None,
+        help="Resource-risk sampling interval seconds (default: 30)",
+    )
+    p.add_argument(
+        "--resource-fd-threshold",
+        type=int,
+        default=None,
+        help="FD growth threshold before a risk event (default: 200)",
+    )
+    p.add_argument(
+        "--resource-thread-threshold",
+        type=int,
+        default=None,
+        help="Thread growth threshold (default: 50)",
+    )
+    p.add_argument(
+        "--max-disk-bytes",
+        type=int,
+        default=None,
+        help="Hard disk free-space quota; stop big evidence when reached",
+    )
+    p.add_argument(
+        "--max-log-file-bytes",
+        type=int,
+        default=None,
+        help="Max bytes per log file before rotation guard (default: 512MiB)",
+    )
+    p.add_argument(
+        "--log-retention-hours",
+        type=int,
+        default=None,
+        help="Delete logcat files older than this (default: 24h)",
+    )
+    p.add_argument(
+        "--max-queue-size", type=int, default=None, help="Max queued dump tasks (default: 50)"
+    )
+    p.add_argument(
+        "--evidence-sample-every-n",
+        type=int,
+        default=None,
+        help="Save full evidence for first and every Nth occurrence (default: 5)",
+    )
+    p.add_argument(
+        "--self-monitor-interval",
+        type=float,
+        default=None,
+        help="Tool-self resource sampling interval seconds (default: 60)",
+    )
+    p.add_argument(
+        "--redact", action="store_true", help="Apply built-in privacy redaction to reports/logs"
+    )
+    p.add_argument(
+        "--redaction-regex",
+        action="append",
+        default=None,
+        help="Extra redaction regex (repeatable)",
+    )
+    p.add_argument("--webhook-url", default=None, help="Generic webhook URL for notifications")
+    p.add_argument(
+        "--webhook-event",
+        action="append",
+        default=None,
+        help="Webhook event type (repeatable; default: all four)",
+    )
+    p.add_argument(
+        "--webhook-rate-limit",
+        type=float,
+        default=None,
+        help="Minimum seconds between same-event notifications",
+    )
+    p.add_argument(
+        "--enable-plugins",
+        action="store_true",
+        help="Enable installed sat.plugins entry points (default: disabled)",
+    )
+    p.add_argument(
+        "--no-tombstone-pull",
+        action="store_true",
+        help="Skip pulling /data/tombstones/ for native crashes",
+    )
+    p.add_argument(
+        "--no-anr-trace-pull", action="store_true", help="Skip pulling /data/anr/ for ANRs"
+    )
 
     # Output
     p.add_argument("--no-html", action="store_true", help="Skip report.html")
-    p.add_argument("--status-interval", type=float, default=None,
-                   help="status.json heartbeat interval seconds (default: 10)")
-    p.add_argument("--dashboard", action="store_true",
-                   help="Start a localhost-only live dashboard")
-    p.add_argument("--junit", default=None,
-                   help="Write JUnit XML to this path (one case per issue group)")
+    p.add_argument(
+        "--status-interval",
+        type=float,
+        default=None,
+        help="status.json heartbeat interval seconds (default: 10)",
+    )
+    p.add_argument("--dashboard", action="store_true", help="Start a localhost-only live dashboard")
+    p.add_argument(
+        "--junit", default=None, help="Write JUnit XML to this path (one case per issue group)"
+    )
 
     # Workloads
-    p.add_argument("--workload", choices=["launch", "monkey", "external"],
-                   default=None,
-                   help="Run a workload inside the monitor window "
-                        "(default: monitor-only)")
-    p.add_argument("--monkey-seed", type=int, default=0,
-                   help="Monkey seed (deterministic runs)")
-    p.add_argument("--monkey-events", type=int, default=1000,
-                   help="Monkey event count")
-    p.add_argument("--monkey-throttle", type=int, default=50,
-                   help="Monkey throttle milliseconds")
-    p.add_argument("--external-cmd", default=None,
-                   help="External workload command (e.g. maestro test flow.yaml)")
-    p.add_argument("--workload-timeout", type=float, default=300.0,
-                   help="External workload timeout seconds")
+    p.add_argument(
+        "--workload",
+        choices=["launch", "monkey", "external"],
+        default=None,
+        help="Run a workload inside the monitor window (default: monitor-only)",
+    )
+    p.add_argument("--monkey-seed", type=int, default=0, help="Monkey seed (deterministic runs)")
+    p.add_argument("--monkey-events", type=int, default=1000, help="Monkey event count")
+    p.add_argument("--monkey-throttle", type=int, default=50, help="Monkey throttle milliseconds")
+    p.add_argument(
+        "--external-cmd",
+        default=None,
+        help="External workload command (e.g. maestro test flow.yaml)",
+    )
+    p.add_argument(
+        "--workload-timeout", type=float, default=300.0, help="External workload timeout seconds"
+    )
 
     # Logging
     p.add_argument("-q", "--quiet", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
-    p.add_argument("--log-json", action="store_true",
-                   help="Emit logs as JSON lines to stderr")
+    p.add_argument("--log-json", action="store_true", help="Emit logs as JSON lines to stderr")
 
     sub = p.add_subparsers(dest="command", metavar="COMMAND")
     recover = sub.add_parser(
         "recover",
         help="Rebuild report.json from a run's incident journal",
     )
-    recover.add_argument("--output", required=True,
-                         help="Run output directory to recover")
+    recover.add_argument("--output", required=True, help="Run output directory to recover")
     doctor = sub.add_parser(
         "doctor",
         help="Read-only environment / device capability self-check",
     )
-    doctor.add_argument("--package", required=True,
-                        help="Target package to check")
-    doctor.add_argument("--device", default=None,
-                        help="ADB serial (required if multiple devices)")
-    doctor.add_argument("--json", action="store_true",
-                        help="Emit the diagnosis as JSON")
-    doctor.add_argument("--output-dir", default=None,
-                        help="Output directory to check (default: ./reports)")
+    doctor.add_argument("--package", required=True, help="Target package to check")
+    doctor.add_argument("--device", default=None, help="ADB serial (required if multiple devices)")
+    doctor.add_argument("--json", action="store_true", help="Emit the diagnosis as JSON")
+    doctor.add_argument(
+        "--output-dir", default=None, help="Output directory to check (default: ./reports)"
+    )
     compare = sub.add_parser(
         "compare",
         help="Compare two reports by incident fingerprint",
     )
-    compare.add_argument("--baseline", required=True,
-                         help="Baseline report.json")
-    compare.add_argument("--current", required=True,
-                         help="Current report.json")
-    compare.add_argument("--output", required=True,
-                         help="Output directory for compare artifacts")
-    compare.add_argument("--fail-on-new-regression", action="store_true",
-                         help="Exit 1 when new regressions or worsened issues exist")
-    compare.add_argument("--junit", default=None,
-                         help="Optional JUnit XML path")
+    compare.add_argument("--baseline", required=True, help="Baseline report.json")
+    compare.add_argument("--current", required=True, help="Current report.json")
+    compare.add_argument("--output", required=True, help="Output directory for compare artifacts")
+    compare.add_argument(
+        "--fail-on-new-regression",
+        action="store_true",
+        help="Exit 1 when new regressions or worsened issues exist",
+    )
+    compare.add_argument("--junit", default=None, help="Optional JUnit XML path")
     replay = sub.add_parser(
         "replay",
         help="Replay a previous run from its replay.yaml manifest",
     )
-    replay.add_argument("--manifest", required=True,
-                        help="Path to replay.yaml")
-    replay.add_argument("--output", default=None,
-                        help="New output directory (default: sibling replay dir)")
-    replay.add_argument("--duration", type=_parse_duration, default="60s",
-                        help="Replay duration (default: 60s)")
+    replay.add_argument("--manifest", required=True, help="Path to replay.yaml")
+    replay.add_argument(
+        "--output", default=None, help="New output directory (default: sibling replay dir)"
+    )
+    replay.add_argument(
+        "--duration", type=_parse_duration, default="60s", help="Replay duration (default: 60s)"
+    )
     export = sub.add_parser(
         "export",
         help="Export a run directory as a shareable bundle",
     )
-    export.add_argument("--output", required=True,
-                        help="Run output directory")
-    export.add_argument("--target", required=True,
-                        help="Destination zip path")
-    export.add_argument("--redacted", action="store_true",
-                        help="Redact sensitive data before bundling")
+    export.add_argument("--output", required=True, help="Run output directory")
+    export.add_argument("--target", required=True, help="Destination zip path")
+    export.add_argument(
+        "--redacted", action="store_true", help="Redact sensitive data before bundling"
+    )
     index = sub.add_parser(
         "index",
         help="Scan a reports root and build a local index",
@@ -585,11 +735,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Aggregate trend from indexed reports",
     )
     trend_cmd.add_argument("root", help="Reports root directory")
-    trend_cmd.add_argument("--output", default=None,
-                           help="Output directory (default: <root>)")
-    trend_cmd.add_argument("--by", default="fingerprint",
-                           choices=["fingerprint", "type"],
-                           help="Trend grouping key")
+    trend_cmd.add_argument("--output", default=None, help="Output directory (default: <root>)")
+    trend_cmd.add_argument(
+        "--by", default="fingerprint", choices=["fingerprint", "type"], help="Trend grouping key"
+    )
     return p
 
 
@@ -604,23 +753,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except (RunLockError, ValueError, FileNotFoundError) as e:
             log.error("recover failed: %s", e)
             return EXIT_SETUP
-        log.info("recover complete; verdict=%s incidents=%d",
-                 result.get("verdict"), len(result.get("incidents", [])))
+        log.info(
+            "recover complete; verdict=%s incidents=%d",
+            result.get("verdict"),
+            len(result.get("incidents", [])),
+        )
         return EXIT_OK
 
     if args.command == "doctor":
         adb = Adb(serial=args.device)
         try:
             result = run_doctor(
-                adb, args.package, device=args.device,
+                adb,
+                args.package,
+                device=args.device,
                 output_dir=Path(args.output_dir) if args.output_dir else None,
             )
         except DeviceSetupError as e:
             if args.json:
-                print(json.dumps(
-                    {"ok": False, "error": str(e), "checks": []},
-                    indent=2, ensure_ascii=False,
-                ))
+                print(
+                    json.dumps(
+                        {"ok": False, "error": str(e), "checks": []},
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                )
             else:
                 log.error("doctor failed: %s", e)
             return EXIT_SETUP
@@ -629,8 +786,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else:
             log.info("doctor ok for %s on %s", args.package, result["device"])
             for check in result["checks"]:
-                log.info("  [%s] %s: %s",
-                         check["status"], check["name"], check["detail"])
+                log.info("  [%s] %s: %s", check["status"], check["name"], check["detail"])
         return EXIT_OK
 
     if args.command == "compare":
@@ -645,20 +801,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             log.error("compare failed: %s", e)
             return EXIT_SETUP
         log.info("compare written: %s", Path(args.output) / COMPARE_FILENAME)
-        if args.fail_on_new_regression and (
-            result["new_regressions"] or result["worsened"]
-        ):
+        if args.fail_on_new_regression and (result["new_regressions"] or result["worsened"]):
             return EXIT_GATE_FAILED
         return EXIT_OK
 
     if args.command == "replay":
         manifest = Path(args.manifest)
-        out = Path(args.output) if args.output else (
-            manifest.parent / f"replay-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        out = (
+            Path(args.output)
+            if args.output
+            else (manifest.parent / f"replay-{datetime.now().strftime('%Y%m%d_%H%M%S')}")
         )
         try:
             stab = run_replay(
-                manifest, out, adb=Adb(), duration_sec=args.duration,
+                manifest,
+                out,
+                adb=Adb(),
+                duration_sec=args.duration,
             )
         except (ValueError, FileNotFoundError, KeyError) as e:
             log.error("replay failed: %s", e)
@@ -669,7 +828,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.command == "export":
         try:
             target = export_bundle(
-                Path(args.output), Path(args.target), redacted=args.redacted,
+                Path(args.output),
+                Path(args.target),
+                redacted=args.redacted,
             )
         except (OSError, ValueError) as e:
             log.error("export failed: %s", e)
@@ -684,8 +845,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except OSError as e:
             log.error("index failed: %s", e)
             return EXIT_SETUP
-        log.info("indexed %d runs (%d errors)",
-                 data["run_count"], len(data["errors"]))
+        log.info("indexed %d runs (%d errors)", data["run_count"], len(data["errors"]))
         return EXIT_OK
 
     if args.command == "trend":
@@ -716,12 +876,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(json.dumps(cfg.config_effective(), indent=2, ensure_ascii=False))
         return EXIT_OK
 
-    effective_duration = args.duration if args.duration is not None else (
-        profile_duration(args.profile) or 300
+    effective_duration = (
+        args.duration if args.duration is not None else (profile_duration(args.profile) or 300)
     )
 
-    log.info("stability_auto_test starting; package=%s duration=%.0fs out=%s",
-             cfg.package, effective_duration, cfg.output_dir)
+    log.info(
+        "stability_auto_test starting; package=%s duration=%.0fs out=%s",
+        cfg.package,
+        effective_duration,
+        cfg.output_dir,
+    )
 
     stab: Optional[StabilityTest] = None
     interrupted = False
@@ -729,6 +893,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         stab = StabilityTest(cfg)
         if args.workload == "launch" and args.device:
             from .matrix import launch_package_on
+
             try:
                 launch_package_on(args.device, cfg.package)
             except Exception:
@@ -787,6 +952,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.junit:
         try:
             from .reporter.junit import write_junit
+
             junit_result = result
             if cfg.redact:
                 junit_result = Redactor.from_config(
@@ -803,6 +969,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             log.exception("redaction failed")
     try:
         from .reporter.github_summary import write_github_summary
+
         write_github_summary(result)
     except Exception:
         log.exception("github summary write failed")

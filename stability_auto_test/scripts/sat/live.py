@@ -38,10 +38,13 @@ class LiveServer:
 
     def start(self) -> None:
         self._server = ThreadingHTTPServer(
-            (self.host, self.port), self._handler_factory(),
+            (self.host, self.port),
+            self._handler_factory(),
         )
         self._thread = threading.Thread(
-            target=self._server.serve_forever, daemon=True, name="live-dashboard",
+            target=self._server.serve_forever,
+            daemon=True,
+            name="live-dashboard",
         )
         self._thread.start()
 
@@ -106,7 +109,8 @@ class LiveServer:
                 )
             if self._stop_callback is not None:
                 threading.Thread(
-                    target=self._stop_callback, daemon=True,
+                    target=self._stop_callback,
+                    daemon=True,
                 ).start()
             return 200, json.dumps({"ok": True}).encode(), "application/json"
         if method == "POST" and path == "/api/bookmark":
@@ -127,17 +131,23 @@ class LiveServer:
             return 200, json.dumps({"ok": True}).encode(), "application/json"
         return 404, b"not found", "text/plain"
 
+    def _broadcast(self) -> None:
+        """Push current status to all connected SSE subscribers."""
+        payload = "data: " + json.dumps(self._status_query() or {}, ensure_ascii=False) + "\n\n"
+        with self._lock:
+            for q in list(self._subscribers):
+                try:
+                    q.put_nowait(payload)
+                except queue.Full:
+                    pass
+
     def stream_events(self):
         """SSE generator; closing it removes the subscriber (no leak)."""
         q: queue.Queue = queue.Queue(maxsize=10)
         with self._lock:
             self._subscribers.add(q)
         try:
-            yield (
-                "data: "
-                + json.dumps(self._status_query() or {}, ensure_ascii=False)
-                + "\n\n"
-            )
+            yield ("data: " + json.dumps(self._status_query() or {}, ensure_ascii=False) + "\n\n")
             while True:
                 try:
                     item = q.get(timeout=15)
@@ -166,7 +176,9 @@ class LiveServer:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
                 code, resp, ctype = server.handle(
-                    self.path, method="POST", body=body,
+                    self.path,
+                    method="POST",
+                    body=body,
                 )
                 self._send_bytes(resp, ctype, code)
 

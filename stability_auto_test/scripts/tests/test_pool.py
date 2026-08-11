@@ -47,8 +47,9 @@ def _writers(tmp_path: Path):
 
 
 def _scripted_logcat_stream(lines: List[str]):
-    stream = LogcatStream(serial=None, buffers=["main"], reconnect_backoff_sec=0.0,
-                          popen_fn=lambda *a, **k: None)
+    stream = LogcatStream(
+        serial=None, buffers=["main"], reconnect_backoff_sec=0.0, popen_fn=lambda *a, **k: None
+    )
 
     def fake_lines():
         for ln in lines:
@@ -63,8 +64,8 @@ def test_watcher_emits_lifecycle_rows_only(tmp_path: Path):
     ev_w, life_w = _writers(tmp_path)
 
     states = [
-        [Process(pid=1234, name=PACKAGE)],   # initial discover
-        [],                                   # gone next reconcile
+        [Process(pid=1234, name=PACKAGE)],  # initial discover
+        [],  # gone next reconcile
     ]
     iter_states = iter(states)
 
@@ -78,7 +79,7 @@ def test_watcher_emits_lifecycle_rows_only(tmp_path: Path):
         discover_fn=lambda adb, pkg: next(iter_states, []),
     )
     pool.start(initial_processes=[Process(pid=1234, name=PACKAGE)])
-    time.sleep(0.3)   # > 2 × rescan_interval_sec
+    time.sleep(0.3)  # > 2 × rescan_interval_sec
     pool.stop(join_timeout=1.0)
     ev_w.close()
     life_w.close()
@@ -191,10 +192,15 @@ def test_max_incidents_cap_enforced(tmp_path: Path):
     )
     pool.start()
     for pid in (1, 2, 3):
-        pool._dispatch(StabilityEvent(
-            event_type=EVENT_JAVA_CRASH, process=PACKAGE, pid=pid,
-            triggered_at=f"t{pid}", summary=f"e{pid}",
-        ))
+        pool._dispatch(
+            StabilityEvent(
+                event_type=EVENT_JAVA_CRASH,
+                process=PACKAGE,
+                pid=pid,
+                triggered_at=f"t{pid}",
+                summary=f"e{pid}",
+            )
+        )
     time.sleep(0.2)
     pool.stop(join_timeout=1.0)
     ev_w.close()
@@ -225,10 +231,15 @@ def test_stop_drains_in_flight_dump(tmp_path: Path):
         java_crash_dump_fn=slow_dump,
     )
     pool.start()
-    pool._dispatch(StabilityEvent(
-        event_type=EVENT_JAVA_CRASH, process=PACKAGE, pid=1,
-        triggered_at="t1", summary="e1",
-    ))
+    pool._dispatch(
+        StabilityEvent(
+            event_type=EVENT_JAVA_CRASH,
+            process=PACKAGE,
+            pid=1,
+            triggered_at="t1",
+            summary="e1",
+        )
+    )
     pool.stop(join_timeout=1.0, dump_shutdown_timeout_sec=5.0)
     ev_w.close()
     life_w.close()
@@ -259,10 +270,15 @@ def test_dump_failure_marks_failed_and_stop_does_not_deadlock(tmp_path: Path):
         java_crash_dump_fn=failing_dump,
     )
     pool.start()
-    pool._dispatch(StabilityEvent(
-        event_type=EVENT_JAVA_CRASH, process=PACKAGE, pid=2,
-        triggered_at="t2", summary="e2",
-    ))
+    pool._dispatch(
+        StabilityEvent(
+            event_type=EVENT_JAVA_CRASH,
+            process=PACKAGE,
+            pid=2,
+            triggered_at="t2",
+            summary="e2",
+        )
+    )
     pool.stop(join_timeout=1.0, dump_shutdown_timeout_sec=2.0)
     ev_w.close()
     life_w.close()
@@ -292,10 +308,15 @@ def test_dump_shutdown_timeout_marks_timed_out_and_returns(tmp_path: Path):
         java_crash_dump_fn=blocked_dump,
     )
     pool.start()
-    pool._dispatch(StabilityEvent(
-        event_type=EVENT_JAVA_CRASH, process=PACKAGE, pid=3,
-        triggered_at="t3", summary="e3",
-    ))
+    pool._dispatch(
+        StabilityEvent(
+            event_type=EVENT_JAVA_CRASH,
+            process=PACKAGE,
+            pid=3,
+            triggered_at="t3",
+            summary="e3",
+        )
+    )
 
     started = time.monotonic()
     pool.stop(join_timeout=0.2, dump_shutdown_timeout_sec=0.1)
@@ -319,23 +340,22 @@ def test_dump_shutdown_timeout_marks_timed_out_and_returns(tmp_path: Path):
 def test_logcat_pre_and_post_context_written_for_incident(tmp_path: Path):
     ev_w, life_w = _writers(tmp_path)
     incidents_dir = tmp_path / "incidents"
-    pre_lines = [
-        f"05-21 09:59:{i:02d}.000  1234  1234 I App: pre-{i}"
-        for i in range(20)
-    ]
+    pre_lines = [f"05-21 09:59:{i:02d}.000  1234  1234 I App: pre-{i}" for i in range(20)]
     crash_lines = [
         "05-21 10:00:00.100  1234  1234 E AndroidRuntime: FATAL EXCEPTION: main",
         "05-21 10:00:00.100  1234  1234 E AndroidRuntime: Process: com.example.app, PID: 1234",
         "05-21 10:00:00.100  1234  1234 E AndroidRuntime: java.lang.RuntimeException: boom",
         "05-21 10:00:00.100  1234  1234 E AndroidRuntime: \tat X.y(X.java:1)",
     ]
-    post_lines = [
-        f"05-21 10:00:0{i}.000  1234  1234 I App: post-{i}"
-        for i in range(10)
-    ]
-    lines = pre_lines + crash_lines + post_lines + [
-        "05-21 10:00:11.000  9999  9999 I OtherTag: end",
-    ]
+    post_lines = [f"05-21 10:00:0{i}.000  1234  1234 I App: post-{i}" for i in range(10)]
+    lines = (
+        pre_lines
+        + crash_lines
+        + post_lines
+        + [
+            "05-21 10:00:11.000  9999  9999 I OtherTag: end",
+        ]
+    )
 
     pool = CollectorPool(
         MagicMock(),
@@ -391,14 +411,16 @@ def test_stop_early_marks_post_context_incomplete(tmp_path: Path):
         discover_fn=lambda adb, pkg: [],
     )
     pool.start()
-    pool._dispatch(StabilityEvent(
-        event_type=EVENT_JAVA_CRASH,
-        process=PACKAGE,
-        pid=1234,
-        triggered_at="2026-05-21 10:00:00.000",
-        summary="boom",
-        raw_lines=["raw"],
-    ))
+    pool._dispatch(
+        StabilityEvent(
+            event_type=EVENT_JAVA_CRASH,
+            process=PACKAGE,
+            pid=1234,
+            triggered_at="2026-05-21 10:00:00.000",
+            summary="boom",
+            raw_lines=["raw"],
+        )
+    )
     pool.stop(join_timeout=0.5, dump_shutdown_timeout_sec=2.0)
     ev_w.close()
     life_w.close()
@@ -426,14 +448,16 @@ def test_pre_context_zero_has_empty_pre_section(tmp_path: Path):
         discover_fn=lambda adb, pkg: [],
     )
     pool.start()
-    pool._dispatch(StabilityEvent(
-        event_type=EVENT_JAVA_CRASH,
-        process=PACKAGE,
-        pid=1234,
-        triggered_at="2026-05-21 10:00:00.000",
-        summary="boom",
-        raw_lines=["raw"],
-    ))
+    pool._dispatch(
+        StabilityEvent(
+            event_type=EVENT_JAVA_CRASH,
+            process=PACKAGE,
+            pid=1234,
+            triggered_at="2026-05-21 10:00:00.000",
+            summary="boom",
+            raw_lines=["raw"],
+        )
+    )
     pool.stop(join_timeout=0.5, dump_shutdown_timeout_sec=2.0)
     ev_w.close()
     life_w.close()
@@ -496,7 +520,8 @@ def test_logcat_stats_preserved_after_stop(tmp_path: Path):
 
 def test_workload_restart_exit_marked_expected(tmp_path: Path):
     (tmp_path / "workload_manifest.json").write_text(
-        '{"type": "monkey", "status": "ok"}', encoding="utf-8",
+        '{"type": "monkey", "status": "ok"}',
+        encoding="utf-8",
     )
     ev_w, life_w = _writers(tmp_path)
     pool = CollectorPool(
@@ -509,16 +534,78 @@ def test_workload_restart_exit_marked_expected(tmp_path: Path):
         discover_fn=lambda adb, pkg: [],
     )
     pool.start()
-    pool._dispatch(StabilityEvent(
-        event_type=EVENT_PROCESS_DEATH,
-        process=PACKAGE,
-        pid=1234,
-        triggered_at="2026-05-21 10:00:00.000",
-        summary="process_death: cached",
-        reason="cached",
-    ))
+    pool._dispatch(
+        StabilityEvent(
+            event_type=EVENT_PROCESS_DEATH,
+            process=PACKAGE,
+            pid=1234,
+            triggered_at="2026-05-21 10:00:00.000",
+            summary="process_death: cached",
+            reason="cached",
+        )
+    )
     pool.stop(join_timeout=1.0, dump_shutdown_timeout_sec=3.0)
     ev_w.close()
     life_w.close()
     incident = json.loads(next((tmp_path / "incidents").glob("*.json")).read_text())
     assert incident["evidence"]["workload_expected"] is True
+
+
+def test_timed_out_task_has_exactly_one_terminal_state(tmp_path: Path):
+    """A timed-out task must never later transition to persisted or failed."""
+    ev_w, life_w = _writers(tmp_path)
+    incidents_dir = tmp_path / "incidents"
+    release = threading.Event()
+    state_log = []
+
+    def blocked_then_succeed(adb, ev, d):
+        if release.wait(10.0):
+            state_log.append("dumper_completed")
+            return {"type": ev.event_type}
+        raise RuntimeError("unexpected")
+
+    pool = CollectorPool(
+        MagicMock(),
+        PACKAGE,
+        events_writer=ev_w,
+        lifecycle_writer=life_w,
+        incidents_dir=incidents_dir,
+        collectors=CollectorsConfig(logcat_enabled=False),
+        dumps=DumpsConfig(max_concurrent=1, dump_shutdown_timeout_sec=0.1),
+        discover_fn=lambda adb, pkg: [],
+        java_crash_dump_fn=blocked_then_succeed,
+    )
+    pool.start()
+    pool._dispatch(
+        StabilityEvent(
+            event_type=EVENT_JAVA_CRASH,
+            process=PACKAGE,
+            pid=4,
+            triggered_at="t4",
+            summary="e4",
+        )
+    )
+
+    pool.stop(join_timeout=0.2, dump_shutdown_timeout_sec=0.1)
+    ev_w.close()
+    life_w.close()
+
+    # Task must be timed_out, not persisted or failed.
+    states = pool.dump_task_states()
+    assert states["timed_out"] == 1
+    assert states["persisted"] == 0
+    assert states["failed"] == 0
+
+    # Now release the dumper — it completes but must NOT change state.
+    release.set()
+    deadline = time.monotonic() + 3.0
+    while any(t.name.startswith("dump-") for t in threading.enumerate()):
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+
+    # State must still be timed_out (not flipped to persisted).
+    states_after = pool.dump_task_states()
+    assert states_after["timed_out"] == 1
+    assert states_after["persisted"] == 0
+    assert states_after["failed"] == 0

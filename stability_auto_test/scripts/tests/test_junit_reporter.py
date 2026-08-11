@@ -70,3 +70,37 @@ def test_junit_escapes_special_characters(tmp_path: Path):
     names = [c.attrib["name"] for c in root.findall(".//testcase")]
     assert 'a<b>&"c"' in names
     assert "<failure" not in names[0]
+
+
+def test_stable_suite_has_zero_failures(tmp_path: Path):
+    """A stable report with no gate failure must have failures=0."""
+    result = _result(
+        verdict="stable",
+        policy={"enabled": True, "passed": True, "rules": []},
+    )
+    xml = render_junit(result)
+    root = ET.fromstring(xml)
+    assert int(root.attrib["failures"]) == 0
+    assert int(root.attrib["errors"]) == 0
+    cases = root.findall(".//testcase")
+    assert len(cases) == 2
+    # No failure or error children on any testcase.
+    for case in cases:
+        assert case.find("failure") is None
+        assert case.find("error") is None
+
+
+def test_empty_inconclusive_report_has_run_level_error():
+    """Empty report with inconclusive verdict must produce a run-level error."""
+    result = _result(
+        verdict="inconclusive",
+        issue_groups=[],
+        incidents=[],
+        policy={"enabled": False, "passed": True, "rules": []},
+    )
+    xml = render_junit(result)
+    root = ET.fromstring(xml)
+    assert int(root.attrib["tests"]) == 1
+    assert int(root.attrib["errors"]) == 1
+    case = root.find(".//testcase")
+    assert case.find("error") is not None

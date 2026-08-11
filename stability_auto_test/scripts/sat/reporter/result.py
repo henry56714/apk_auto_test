@@ -134,13 +134,48 @@ def _load_incidents(incidents_dir: Path) -> List[Dict]:
 
 
 def _journal_counts(records: List[Dict]) -> Dict[str, int]:
+    """Fold journal records by event_id to produce unique terminal-state counts.
+
+    Each event_id may appear multiple times (one ``detected`` record + one or
+    more terminal records).  The LAST terminal status wins per event_id so the
+    pipeline identity holds:
+
+        detected = persisted + failed + timed_out + dropped_by_cap + dropped_by_backpressure
+
+    If an event_id appears with two different terminal statuses (e.g. timed_out
+    followed by persisted) a warning is logged and only the LAST status is
+    counted — the report must never double-count a single event.
+    """
     detected: set = set()
-    persisted = failed = timed_out = dropped = dropped_bp = 0
+    # Per-event unique terminal status (last-write-wins).
+    terminal_by_event: Dict[str, str] = {}
     for rec in records:
         event_id = rec.get("event_id")
-        if event_id:
-            detected.add(event_id)
         status = rec.get("status")
+        if not event_id:
+            continue
+        if status == STATUS_DETECTED:
+            detected.add(event_id)
+            continue
+        if status in (
+            STATUS_PERSISTED,
+            STATUS_FAILED,
+            STATUS_TIMED_OUT,
+            STATUS_DROPPED_BY_CAP,
+            STATUS_DROPPED_BY_BACKPRESSURE,
+        ):
+            prev = terminal_by_event.get(event_id)
+            if prev is not None and prev != status:
+                log.warning(
+                    "journal event %s has multiple terminal states: %s → %s (using last)",
+                    event_id,
+                    prev,
+                    status,
+                )
+            terminal_by_event[event_id] = status
+
+    persisted = failed = timed_out = dropped = dropped_bp = 0
+    for status in terminal_by_event.values():
         if status == STATUS_PERSISTED:
             persisted += 1
         elif status == STATUS_FAILED:
@@ -151,6 +186,7 @@ def _journal_counts(records: List[Dict]) -> Dict[str, int]:
             dropped += 1
         elif status == STATUS_DROPPED_BY_BACKPRESSURE:
             dropped_bp += 1
+
     return {
         "detected_count": len(detected),
         "persisted_count": persisted,
@@ -195,8 +231,10 @@ def _build_incidents(
     """Merge incident JSON evidence with journal event facts.
 
     Journal records are authoritative for *whether* an event happened; incident
-    JSON files supply evidence details. Failed/timed-out events get a
+    JSON files supply evidence details. Failed/timed-out/dropped events get a
     placeholder incident so a broken dumper can never make a run look clean.
+
+    Each event_id is folded to a single unique terminal status (last-wins).
     Returns ``(incidents, warnings)``.
     """
     loaded = _load_incidents(incidents_dir)
@@ -211,8 +249,10 @@ def _build_incidents(
 
     incidents: List[Dict] = list(without_id)
     warnings: List[str] = []
+    # Fold to unique terminal status per event_id (last-wins).
     terminal_by_event: Dict[str, str] = {}
-    detected_ids = set()
+    terminal_rec_by_event: Dict[str, Dict] = {}
+    detected_ids: set = set()
     detected_by_id: Dict[str, Dict] = {}
     for rec in journal_records:
         event_id = rec.get("event_id")
@@ -224,24 +264,33 @@ def _build_incidents(
             detected_by_id[event_id] = rec
             continue
         terminal_by_event[event_id] = status
+        terminal_rec_by_event[event_id] = rec
 
+    for event_id, status in terminal_by_event.items():
         if status == STATUS_DROPPED_BY_CAP:
             continue  # counted in the pipeline, but not an incident
 
         incident = by_id.pop(event_id, None)
         if incident is None:
-            evidence_status = (
-                STATUS_PERSISTED if status == STATUS_PERSISTED
-                else STATUS_FAILED if status == STATUS_FAILED
-                else STATUS_TIMED_OUT
-            )
+            # Map terminal status to a truthful evidence_status.
+            if status == STATUS_PERSISTED:
+                evidence_status = STATUS_PERSISTED
+            elif status == STATUS_FAILED:
+                evidence_status = STATUS_FAILED
+            elif status == STATUS_DROPPED_BY_BACKPRESSURE:
+                evidence_status = STATUS_DROPPED_BY_BACKPRESSURE
+            else:
+                evidence_status = STATUS_TIMED_OUT
+
+            rec = terminal_rec_by_event[event_id]
             incident = _placeholder_incident(
-                rec, evidence_status, details=detected_by_id.get(event_id),
+                rec,
+                evidence_status,
+                details=detected_by_id.get(event_id),
             )
-            if status != STATUS_PERSISTED:
+            if status not in (STATUS_PERSISTED, STATUS_DROPPED_BY_BACKPRESSURE):
                 warnings.append(
-                    f"incident evidence missing for {event_id} "
-                    f"(journal status={status})"
+                    f"incident evidence missing for {event_id} (journal status={status})"
                 )
         else:
             evidence = incident.setdefault("evidence", {})
@@ -259,14 +308,14 @@ def _build_incidents(
     # killed mid-run): surface them as failed so they cannot be silently lost.
     orphaned = detected_ids - set(terminal_by_event)
     if orphaned:
-        warnings.append(
-            f"{len(orphaned)} journal event(s) ended without a terminal status"
-        )
+        warnings.append(f"{len(orphaned)} journal event(s) ended without a terminal status")
         for rec in journal_records:
             eid = rec.get("event_id")
             if eid in orphaned:
                 placeholder = _placeholder_incident(
-                    rec, STATUS_FAILED, details=detected_by_id.get(eid),
+                    rec,
+                    STATUS_FAILED,
+                    details=detected_by_id.get(eid),
                 )
                 placeholder["evidence"]["reason"] = (
                     "journal ended before a terminal status was recorded"
@@ -288,9 +337,11 @@ def _build_process(
     incidents: List[Dict],
     sample_failures: Dict[str, int],
 ) -> Dict:
-    proc_life = (life_df[life_df["process_name"] == name]
-                 if not life_df.empty and "process_name" in life_df.columns
-                 else pd.DataFrame())
+    proc_life = (
+        life_df[life_df["process_name"] == name]
+        if not life_df.empty and "process_name" in life_df.columns
+        else pd.DataFrame()
+    )
 
     first_seen, last_seen, intervals = _alive_intervals(proc_life, run_start, run_end)
     alive_sec = sum((end - start).total_seconds() for start, end in intervals)
@@ -314,14 +365,16 @@ def _build_lifecycle_events(life_df: pd.DataFrame) -> List[Dict]:
         return []
     out: List[Dict] = []
     for _, row in life_df.iterrows():
-        out.append({
-            "timestamp": row["timestamp"],
-            "process": row["process_name"],
-            "event": row["event"],
-            "old_pid": int(row["old_pid"]) if pd.notna(row.get("old_pid")) else 0,
-            "new_pid": int(row["new_pid"]) if pd.notna(row.get("new_pid")) else 0,
-            "gap_sec": float(row["gap_sec"]) if pd.notna(row.get("gap_sec")) else 0.0,
-        })
+        out.append(
+            {
+                "timestamp": row["timestamp"],
+                "process": row["process_name"],
+                "event": row["event"],
+                "old_pid": int(row["old_pid"]) if pd.notna(row.get("old_pid")) else 0,
+                "new_pid": int(row["new_pid"]) if pd.notna(row.get("new_pid")) else 0,
+                "gap_sec": float(row["gap_sec"]) if pd.notna(row.get("gap_sec")) else 0.0,
+            }
+        )
     return out
 
 
@@ -396,9 +449,7 @@ def build(
         collection_health = "degraded"
     health_reasons = list(collector_health.get("reasons") or [])
     if recovery_warnings and "journal recovery warnings" not in health_reasons:
-        health_reasons.append(
-            f"journal recovery warnings: {len(recovery_warnings)}"
-        )
+        health_reasons.append(f"journal recovery warnings: {len(recovery_warnings)}")
     coverage_ratio = round(float(collector_health.get("coverage_ratio", 1.0)), 4)
     verdict = compute_verdict(collection_health, incidents=incidents)
 
@@ -410,14 +461,16 @@ def build(
             process_names.add(inc["process"])
 
     processes = [
-        _build_process(name, life_df, started_at, ended_at,
-                       incidents, sample_failures)
+        _build_process(name, life_df, started_at, ended_at, incidents, sample_failures)
         for name in sorted(process_names)
     ]
 
     policy = policy_from_dict(policy_config or {})
     policy_result = evaluate_policy(
-        incidents, processes, coverage_ratio, policy,
+        incidents,
+        processes,
+        coverage_ratio,
+        policy,
     )
     policy_result["enabled"] = bool(ci_mode)
 

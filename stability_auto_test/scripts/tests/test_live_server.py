@@ -24,11 +24,15 @@ def test_stop_endpoint_requires_confirmation():
     calls = []
     server = LiveServer(stop_callback=lambda: calls.append(1))
     code, body, _ = server.handle(
-        "/api/stop", method="POST", body=b'{"confirm": false}',
+        "/api/stop",
+        method="POST",
+        body=b'{"confirm": false}',
     )
     assert code == 400
     code, body, _ = server.handle(
-        "/api/stop", method="POST", body=b'{"confirm": true}',
+        "/api/stop",
+        method="POST",
+        body=b'{"confirm": true}',
     )
     assert code == 200
     deadline = time.monotonic() + 2
@@ -59,7 +63,9 @@ def test_bookmark_endpoint_calls_back():
     labels = []
     server = LiveServer(bookmark_callback=lambda label: labels.append(label))
     code, body, _ = server.handle(
-        "/api/bookmark", method="POST", body=b'{"label": "checkpoint-1"}',
+        "/api/bookmark",
+        method="POST",
+        body=b'{"label": "checkpoint-1"}',
     )
     assert code == 200
     assert labels == ["checkpoint-1"]
@@ -73,3 +79,27 @@ def test_dashboard_page_has_bookmark_and_stop_controls():
     text = body.decode("utf-8")
     assert "bookmark" in text
     assert "stop test" in text
+
+
+def test_status_change_is_broadcast_to_sse_subscriber():
+    """When status changes, all SSE subscribers must receive the update."""
+    status_state = {"run_id": "initial", "count": 0}
+
+    def query():
+        return dict(status_state)
+
+    server = LiveServer(status_query=query)
+    gen = server.stream_events()
+    # First message is the initial status.
+    first = next(gen)
+    assert "initial" in first
+
+    # Change the status and broadcast.
+    status_state["run_id"] = "updated"
+    status_state["count"] = 1
+    server._broadcast()
+
+    # The subscriber should receive the updated status.
+    second = next(gen)
+    assert "updated" in second
+    gen.close()

@@ -42,8 +42,29 @@ def native_sigsegv(device: str, package: str) -> Tuple[bool, str]:
 
 
 def anr(device: str, package: str) -> Tuple[bool, str]:
-    """ANR injection requires a debuggable/eng build; covered by L1 fixtures."""
-    return False, "ANR injection unavailable on user build (use L1 fixtures)"
+    """Check if ANR injection via com.anr.test is available."""
+    r = _adb(device, "shell", "pm", "list", "packages", "com.anr.test")
+    if "com.anr.test" not in r.stdout:
+        return False, "com.anr.test not installed (build with Android SDK)"
+    return True, "com.anr.test available for ANR injection"
+
+
+def trigger_anr(device: str) -> Tuple[bool, str]:
+    """Actually trigger ANR: launch com.anr.test + send touch events."""
+    import time as _time
+
+    _adb(device, "shell", "am", "force-stop", "com.anr.test")
+    _time.sleep(0.5)
+    _adb(device, "shell", "am", "start", "-n", "com.anr.test/.AnrActivity")
+    _time.sleep(2.0)
+    for _ in range(8):
+        _adb(device, "shell", "input", "tap", "540", "1200")
+        _time.sleep(0.25)
+    _time.sleep(5)
+    r = _adb(device, "shell", "ls", "-t", "/data/anr/")
+    if r.returncode == 0 and "anr_" in r.stdout:
+        return True, "ANR triggered via com.anr.test"
+    return False, "ANR trigger produced no trace"
 
 
 def low_memory(device: str, package: str) -> Tuple[bool, str]:

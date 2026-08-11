@@ -24,32 +24,46 @@ class RetraceResult:
     error: Optional[str] = None
 
 
-_CLASS_LINE_RE = re.compile(r"^(?P<obf>[\w.$]+)\s*->\s*(?P<orig>[\w.$]+):\s*$")
+_CLASS_LINE_RE = re.compile(r"^(?P<orig>[\w.$]+)\s*->\s*(?P<obf>[\w.$]+):\s*$")
+# Standard ProGuard/R8 member lines:
+#   <ret_type> <orig>(<args>) [:<start>:<end>] -> <obf>
+# Examples:
+#   void onResume() -> a
+#   void onResume():10:20 -> a
+#   java.lang.String getName(java.lang.String) -> a
 _MEMBER_LINE_RE = re.compile(
-    r"^\s+(?P<ret>[\w.<>\[\]]+)\s+(?P<obf>[\w$]+)\((?P<args>.*)\)"
-    r"\s*->\s*(?P<orig>[\w$]+)"
+    r"^\s+"
+    r"(?P<ret>[\w.<>\[\]]+)\s+"
+    r"(?P<orig>[\w$<>]+)\((?P<args>[^)]*)\)"
+    r"(?::\d+(?::\d+)?)?\s*->\s*"
+    r"(?P<obf>[\w$]+)"
 )
 
 
 def parse_mapping(mapping_text: str) -> Dict:
-    """Return {obfuscated_class: original_class, (class, obf_method): original}."""
+    """Return {obfuscated_class: original_class, (obf_class, obf_method): orig_method}.
+
+    Accepts standard ProGuard/R8 format where ``original -> obfuscated``.
+    """
     classes: Dict[str, str] = {}
     members: Dict[tuple, str] = {}
-    cur_class: Optional[str] = None
+    cur_orig: Optional[str] = None
+    cur_obf: Optional[str] = None
     for raw in mapping_text.splitlines():
         line = raw.rstrip()
-        if not line:
+        if not line or line.startswith("#"):
             continue
         m = _CLASS_LINE_RE.match(line)
         if m:
-            cur_class = m.group("obf")
-            classes[cur_class] = m.group("orig")
+            cur_orig = m.group("orig")
+            cur_obf = m.group("obf")
+            classes[cur_obf] = cur_orig
             continue
-        if cur_class is None:
+        if cur_obf is None:
             continue
         m = _MEMBER_LINE_RE.match(line)
         if m:
-            members[(cur_class, m.group("obf"))] = m.group("orig")
+            members[(cur_obf, m.group("obf"))] = m.group("orig")
     return {"classes": classes, "members": members}
 
 
@@ -113,7 +127,9 @@ def deobfuscate_stack(
 
     if retrace_command:
         tool_out = _run_retrace_tool(
-            retrace_command.split(), Path(mapping_path), frames,
+            retrace_command.split(),
+            Path(mapping_path),
+            frames,
         )
         if tool_out is not None and len(tool_out) == len(frames):
             return RetraceResult(tool_out, "ok")
@@ -125,7 +141,13 @@ def deobfuscate_stack(
         return RetraceResult(list(frames), "unavailable", str(e))
     out = [_deobfuscate_frame(f, mapping) for f in frames]
     changed = any(a != b for a, b in zip(frames, out))
-    status = "ok" if changed else "unavailable"
+    if not changed:
+        # No frame was deobfuscated — the mapping had no effect.
+        status = "unavailable"
+        if retrace_command:
+            status = "fallback"
+        return RetraceResult(list(frames), status, "no frames matched mapping")
+    status = "ok"
     if retrace_command:
         status = "fallback"
     return RetraceResult(out, status)

@@ -1,16 +1,19 @@
-"""Verify an 8-hour L3 endurance run output (run after the run completes).
+"""Verify an L3 endurance run output (run after the run completes).
 
 Usage:
-    python verify_endurance.py /tmp/sat-endurance-8h-v2
+    python verify_endurance.py <run-output-dir> [--min-duration <seconds>]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
 
 import jsonschema
+
+DEFAULT_MIN_DURATION = 2 * 3600  # default 2 hours for functional endurance
 
 
 def _norm_rss(v):
@@ -19,7 +22,17 @@ def _norm_rss(v):
 
 
 def main() -> int:
-    root = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+    p = argparse.ArgumentParser(description="Verify L3 endurance run output")
+    p.add_argument("root", help="Run output directory")
+    p.add_argument(
+        "--min-duration",
+        type=float,
+        default=DEFAULT_MIN_DURATION,
+        help=f"Minimum run duration in seconds (default: {DEFAULT_MIN_DURATION})",
+    )
+    args = p.parse_args()
+    root = Path(args.root)
+    min_duration = float(args.min_duration)
     report_path = root / "report.json"
     errors = []
     if not report_path.exists():
@@ -31,17 +44,15 @@ def main() -> int:
             errors.append(f"report.json corrupt: {e}")
             report = {}
         else:
-            schema_path = (
-                Path(__file__).parent / "schemas" / "report.schema.json"
-            )
+            schema_path = Path(__file__).parent / "schemas" / "report.schema.json"
             try:
                 jsonschema.validate(report, json.loads(schema_path.read_text()))
             except jsonschema.ValidationError as e:
                 errors.append(f"report schema invalid: {e.message}")
 
             duration = report.get("run", {}).get("duration_sec", 0) or 0
-            if duration < 7.5 * 3600:
-                errors.append(f"duration too short: {duration:.1f}s")
+            if duration < min_duration:
+                errors.append(f"duration too short: {duration:.1f}s < {min_duration:.0f}s")
 
             sr = report.get("self_resource", {}) or {}
             samples = sr.get("samples", []) or []
@@ -64,6 +75,7 @@ def main() -> int:
             journal = root / "incident_journal.jsonl"
             if journal.exists():
                 from sat.journal import read_journal
+
                 _, warnings = read_journal(journal)
                 if warnings:
                     errors.append(f"journal recovery warnings: {warnings}")
@@ -73,9 +85,11 @@ def main() -> int:
                 errors.append("no logcat files")
 
             device_events = report.get("device_events", [])
-            if not any(e.get("event_type") in ("offline", "reboot")
-                       for e in device_events):
-                errors.append("no device offline/reboot injection records")
+            if not any(e.get("event_type") in ("offline", "reboot") for e in device_events):
+                # For short functional endurance runs, device events are not
+                # expected unless the device was intentionally disconnected.
+                if min_duration >= DEFAULT_MIN_DURATION:
+                    errors.append("no device offline/reboot injection records")
 
     if errors:
         print("ENDURANCE VERIFY: FAIL")

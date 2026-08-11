@@ -4,11 +4,11 @@ from pathlib import Path
 
 from sat.analyzers.java_retrace import deobfuscate_stack, parse_mapping
 
-_MAPPING = """com.a.a -> com.example.Main:
-    void a() -> onResume
-    void b(int) -> onDestroy
-com.b.b -> com.example.Util:
-    java.lang.String c() -> name
+_MAPPING = """com.example.Main -> com.a.a:
+    void onResume() -> a
+    void onDestroy(int) -> b
+com.example.Util -> com.b.b:
+    java.lang.String getName() -> c
 """
 
 

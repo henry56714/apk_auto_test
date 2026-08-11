@@ -22,7 +22,7 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional
 
@@ -135,6 +135,8 @@ class _DumpTask:
     anchor_sec: float = 0.0
     state: str = "queued"
     future: Optional[concurrent.futures.Future] = None
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    _terminal_written: bool = False
 
 
 class CollectorPool:
@@ -229,9 +231,8 @@ class CollectorPool:
             self._detection.dedup_window_sec,
             device_ts_window_sec=self._detection.device_ts_window_sec,
         )
-        context_retention = (
-            self._dumps_cfg.context_retention_sec
-            or (self._dumps_cfg.pre_context_sec + self._dumps_cfg.post_context_sec + 60.0)
+        context_retention = self._dumps_cfg.context_retention_sec or (
+            self._dumps_cfg.pre_context_sec + self._dumps_cfg.post_context_sec + 60.0
         )
         self._context_buffer = LogcatContextBuffer(
             retention_sec=context_retention,
@@ -265,7 +266,9 @@ class CollectorPool:
 
         if self._collectors_cfg.logcat_enabled:
             self._logcat_thread = threading.Thread(
-                target=self._logcat_loop, daemon=True, name="logcat-collector",
+                target=self._logcat_loop,
+                daemon=True,
+                name="logcat-collector",
             )
             self._logcat_thread.start()
 
@@ -283,12 +286,8 @@ class CollectorPool:
                 self._package,
                 interval_sec=self._collectors_cfg.resource_risk_interval_sec,
                 detector=ResourceRiskDetector(
-                    fd_growth_threshold=(
-                        self._collectors_cfg.resource_fd_growth_threshold
-                    ),
-                    thread_growth_threshold=(
-                        self._collectors_cfg.resource_thread_growth_threshold
-                    ),
+                    fd_growth_threshold=(self._collectors_cfg.resource_fd_growth_threshold),
+                    thread_growth_threshold=(self._collectors_cfg.resource_thread_growth_threshold),
                 ),
             )
             self._resource_monitor.start()
@@ -307,7 +306,9 @@ class CollectorPool:
             log.exception("exit-info watermark query failed; using no watermark")
 
         self._watcher_thread = threading.Thread(
-            target=self._watch_loop, daemon=True, name="proc-watcher",
+            target=self._watch_loop,
+            daemon=True,
+            name="proc-watcher",
         )
         self._watcher_thread.start()
 
@@ -361,39 +362,48 @@ class CollectorPool:
         except Exception:
             log.exception("exit-info query failed at stop")
 
-        timeout = (self._dumps_cfg.dump_shutdown_timeout_sec
-                   if dump_shutdown_timeout_sec is None
-                   else dump_shutdown_timeout_sec)
+        # Drain pending dump tasks normally first.
+        timeout = (
+            self._dumps_cfg.dump_shutdown_timeout_sec
+            if dump_shutdown_timeout_sec is None
+            else dump_shutdown_timeout_sec
+        )
         with self._task_lock:
-            pending = [t.future for t in self._tasks
-                       if t.future is not None and not t.future.done()]
+            pending = [t for t in self._tasks if t.future is not None and not t.future.done()]
         if pending:
             deadline = time.monotonic() + max(0.0, float(timeout))
-            for future in pending:
+            for task in pending:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
                 try:
-                    future.result(timeout=remaining)
+                    task.future.result(timeout=remaining)
                 except BaseException:  # noqa: BLE001 - state already recorded by wrapper
                     pass
 
+        # Signal cancellation for any tasks still not done.
+        with self._task_lock:
+            for task in self._tasks:
+                if task.state in ("queued", "running") and (
+                    task.future is None or not task.future.done()
+                ):
+                    task.cancelled.set()
+
+        # Mark any still-unfinished tasks as timed_out (single terminal state).
         with self._task_lock:
             for task in self._tasks:
                 if task.state in ("queued", "running") and (
                     task.future is None or not task.future.done()
                 ):
                     task.state = "timed_out"
+                    task._terminal_written = True
                     if self._journal is not None and task.event is not None:
                         try:
                             self._journal.terminal(
                                 task.event.event_id or "",
                                 STATUS_TIMED_OUT,
                                 error_type="dump_shutdown_timeout",
-                                error=(
-                                    "dump task did not finish within "
-                                    "dump_shutdown_timeout_sec"
-                                ),
+                                error=("dump task did not finish within dump_shutdown_timeout_sec"),
                             )
                         except Exception:
                             log.exception("journal timed_out append failed")
@@ -635,18 +645,25 @@ class CollectorPool:
                     self._write_lifecycle(event, proc, old_pid=0, gap_sec=gap)
 
     def _write_lifecycle(
-        self, event: str, process: Process, *, old_pid: int, gap_sec: float,
+        self,
+        event: str,
+        process: Process,
+        *,
+        old_pid: int,
+        gap_sec: float,
     ) -> None:
         if self._lifecycle_writer is None:
             return
-        self._lifecycle_writer.write_row({
-            "timestamp": self._now_iso(),
-            "process_name": process.name,
-            "event": event,
-            "old_pid": old_pid,
-            "new_pid": 0 if event == "gone" else process.pid,
-            "gap_sec": round(gap_sec, 3),
-        })
+        self._lifecycle_writer.write_row(
+            {
+                "timestamp": self._now_iso(),
+                "process_name": process.name,
+                "event": event,
+                "old_pid": old_pid,
+                "new_pid": 0 if event == "gone" else process.pid,
+                "gap_sec": round(gap_sec, 3),
+            }
+        )
 
     # ── dispatcher ──
 
@@ -696,8 +713,9 @@ class CollectorPool:
             with self._event_counts_lock:
                 cap = self._dumps_cfg.max_incidents_per_type
                 if self._event_counts.get(event.event_type, 0) >= cap:
-                    log.warning("max incidents (%d) reached for %s; dropping",
-                                cap, event.event_type)
+                    log.warning(
+                        "max incidents (%d) reached for %s; dropping", cap, event.event_type
+                    )
                     self._dropped_by_cap += 1
                     self._journal_detected(event)
                     self._journal_terminal(
@@ -731,22 +749,39 @@ class CollectorPool:
 
         def run() -> dict:
             with self._task_lock:
+                # Guard: stop() may have already claimed a terminal state.
+                if task._terminal_written:
+                    return {}
                 task.state = "running"
             try:
+                # Check cooperative cancellation before starting work.
+                if task.cancelled.is_set():
+                    raise RuntimeError("dump cancelled before start")
                 result = self._run_dump(event, task.anchor_sec)
             except BaseException as exc:
+                # Single terminal state: only write if not already timed_out.
+                with self._task_lock:
+                    if not task._terminal_written:
+                        task._terminal_written = True
+                        task.state = "failed"
+                    else:
+                        # Another path (stop timeout) already claimed the terminal state.
+                        return {}
                 self._journal_terminal(
                     event.event_id or "",
                     STATUS_FAILED,
                     error_type=type(exc).__name__,
                     error=str(exc)[:300],
                 )
-                with self._task_lock:
-                    task.state = "failed"
                 raise
-            self._journal_terminal(event.event_id or "", STATUS_PERSISTED)
+            # Single terminal state: only write persisted if not already timed_out.
             with self._task_lock:
-                task.state = "persisted"
+                if not task._terminal_written:
+                    task._terminal_written = True
+                    task.state = "persisted"
+                else:
+                    return result
+            self._journal_terminal(event.event_id or "", STATUS_PERSISTED)
             return result
 
         def run_wrapper() -> dict:
@@ -764,16 +799,18 @@ class CollectorPool:
         if self._events_writer is None:
             return
         try:
-            self._events_writer.write_row({
-                "timestamp": event.triggered_at,
-                "event_id": event.event_id or "",
-                "run_id": event.run_id or "",
-                "event_type": event.event_type,
-                "process_name": event.process,
-                "pid": event.pid,
-                "severity": event.severity,
-                "summary": event.summary[:500],
-            })
+            self._events_writer.write_row(
+                {
+                    "timestamp": event.triggered_at,
+                    "event_id": event.event_id or "",
+                    "run_id": event.run_id or "",
+                    "event_type": event.event_type,
+                    "process_name": event.process,
+                    "pid": event.pid,
+                    "severity": event.severity,
+                    "summary": event.summary[:500],
+                }
+            )
         except Exception:
             log.exception("events writer failed")
 
@@ -797,7 +834,10 @@ class CollectorPool:
             return
         try:
             self._journal.terminal(
-                event_id, status, error_type=error_type, error=error,
+                event_id,
+                status,
+                error_type=error_type,
+                error=error,
             )
         except Exception:
             log.exception("journal terminal append failed (%s)", status)
@@ -863,12 +903,16 @@ class CollectorPool:
             incident = self._java_crash_dump(self._adb, event, self._incidents_dir)
         elif event.event_type == EVENT_NATIVE_CRASH:
             incident = self._native_crash_dump(
-                self._adb, event, self._incidents_dir,
+                self._adb,
+                event,
+                self._incidents_dir,
                 pull_tombstone=self._dumps_cfg.pull_tombstone,
             )
         elif event.event_type == EVENT_ANR:
             incident = self._anr_dump(
-                self._adb, event, self._incidents_dir,
+                self._adb,
+                event,
+                self._incidents_dir,
                 pull_anr_trace=self._dumps_cfg.pull_anr_trace,
             )
         elif event.event_type == EVENT_PROCESS_DEATH:
@@ -894,8 +938,7 @@ class CollectorPool:
         fingerprint = fingerprint_incident(incident)
         decision = self._sampler.decide(fingerprint)
         if decision == "occurrence_only":
-            for key in ("context_file", "trace_file", "logcat_slice_file",
-                        "dropbox_file"):
+            for key in ("context_file", "trace_file", "logcat_slice_file", "dropbox_file"):
                 evidence.pop(key, None)
             evidence["sampled"] = True
             evidence["sample_reason"] = "occurrence_only"
@@ -920,7 +963,8 @@ class CollectorPool:
                 evidence.get("top_frames", []),
                 symbols_dir=(
                     Path(self._diagnosis.native_symbols_dir)
-                    if self._diagnosis.native_symbols_dir else None
+                    if self._diagnosis.native_symbols_dir
+                    else None
                 ),
                 llvm_symbolizer=self._diagnosis.llvm_symbolizer_path,
             )
@@ -947,6 +991,7 @@ class CollectorPool:
         path = self._incidents_dir / f"{base}.json"
         if path.exists():
             from .dumpers import write_incident
+
             write_incident(path, incident)
 
     def _record_sample_failure(self, source: str) -> None:

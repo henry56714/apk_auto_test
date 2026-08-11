@@ -31,19 +31,22 @@ def aggregate_reports(device_reports: List[Dict]) -> Dict:
         run = report.get("run", {}) or {}
         device = run.get("device", {}) or {}
         serial = device.get("serial", "?")
-        status = "ok" if report else "missing"
-        if report:
+        has_report = bool(report and report.get("verdict"))
+        status = "ok" if has_report else "missing"
+        if has_report:
             ok_devices += 1
-        devices.append({
-            "serial": serial,
-            "status": status,
-            "android_version": device.get("android_version", "?"),
-            "sdk_int": device.get("sdk_int", 0),
-            "verdict": report.get("verdict", "unknown"),
-            "coverage_ratio": report.get("coverage_ratio", 0.0),
-            "report_path": report.get("_report_path"),
-            "device_events": report.get("device_events") or [],
-        })
+        devices.append(
+            {
+                "serial": serial,
+                "status": status,
+                "android_version": device.get("android_version", "?"),
+                "sdk_int": device.get("sdk_int", 0),
+                "verdict": report.get("verdict", "unknown"),
+                "coverage_ratio": report.get("coverage_ratio", 0.0),
+                "report_path": report.get("_report_path"),
+                "device_events": report.get("device_events") or [],
+            }
+        )
         for event in report.get("device_events") or []:
             device_events.append({"device": serial, **event})
         total_incidents += len(report.get("incidents") or [])
@@ -51,14 +54,17 @@ def aggregate_reports(device_reports: List[Dict]) -> Dict:
             fp = group.get("fingerprint")
             if not fp:
                 continue
-            g = groups.setdefault(fp, {
-                "fingerprint": fp,
-                "type": group.get("type"),
-                "occurrence_count": 0,
-                "affected_devices": [],
-                "first_seen_at": group.get("first_seen_at"),
-                "last_seen_at": group.get("last_seen_at"),
-            })
+            g = groups.setdefault(
+                fp,
+                {
+                    "fingerprint": fp,
+                    "type": group.get("type"),
+                    "occurrence_count": 0,
+                    "affected_devices": [],
+                    "first_seen_at": group.get("first_seen_at"),
+                    "last_seen_at": group.get("last_seen_at"),
+                },
+            )
             g["occurrence_count"] += group.get("occurrence_count", 0)
             if serial not in g["affected_devices"]:
                 g["affected_devices"].append(serial)
@@ -68,13 +74,11 @@ def aggregate_reports(device_reports: List[Dict]) -> Dict:
         "device_count": len(devices),
         "ok_device_count": ok_devices,
         "total_incidents": total_incidents,
-        "aggregate_health": (
-            "healthy" if ok_devices == len(devices) and devices else "degraded"
-        ),
+        "aggregate_health": ("healthy" if ok_devices == len(devices) and devices else "degraded"),
         "device_events": device_events,
         "issue_groups": sorted(
             groups.values(),
-            key=lambda g: (g["last_seen_at"] or ""),
+            key=lambda g: g["last_seen_at"] or "",
             reverse=True,
         ),
     }
@@ -111,6 +115,7 @@ def write_aggregate(result: Dict, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_json(output_dir / AGGREGATE_FILENAME, result)
     (output_dir / AGGREGATE_HTML_FILENAME).write_text(
-        render_aggregate_html(result), encoding="utf-8",
+        render_aggregate_html(result),
+        encoding="utf-8",
     )
     return output_dir / AGGREGATE_FILENAME

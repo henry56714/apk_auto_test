@@ -39,6 +39,9 @@ Documentation = "https://github.com/henry56714/apk_auto_test#readme"
 [project.scripts]
 stability-auto-test = "sat.cli:main"
 
+[project.entry-points."sat.plugins"]
+example = "sat.plugins.example:ExampleCollector"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["sat*"]

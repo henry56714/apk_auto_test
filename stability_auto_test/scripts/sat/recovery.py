@@ -74,6 +74,16 @@ def recover_report(output_dir: Path) -> Dict:
             pass
 
     recovered_at = utc_now_iso()
+    # Abnormal exit means the observation window was incomplete — default to
+    # inconclusive rather than fabricating a healthy verdict.
+    collector_health = {
+        "health": "inconclusive",
+        "coverage_ratio": 0.0,
+        "reasons": [
+            "recovered after abnormal exit; observation window incomplete — "
+            "no run-complete journal marker found"
+        ],
+    }
     result = result_builder.build(
         output_dir=output_dir,
         package=package,
@@ -86,6 +96,7 @@ def recover_report(output_dir: Path) -> Dict:
         exit_reason="recovered_after_abnormal_exit",
         recovered=True,
         recovered_at=recovered_at,
+        collector_health=collector_health,
     )
     result_builder.write(result, output_dir)
     log.info("recovered report written to %s", output_dir / result_builder.REPORT_FILENAME)

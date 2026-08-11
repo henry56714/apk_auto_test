@@ -20,7 +20,7 @@ class SymbolizeResult:
 
 
 _FRAME_RE = re.compile(
-    r"^(?P<prefix>#\d+\s+pc\s+)(?P<addr>0x[0-9a-fA-F]+)"
+    r"^(?P<prefix>#\d+\s+pc\s+)(?P<addr>(?:0x)?[0-9a-fA-F]+)"
     r"\s+(?P<module>\S+\.so(?:\.[\w.]+)?)(?:\s+\((?P<symbol>.*)\))?\s*$"
 )
 
@@ -41,7 +41,8 @@ def _run_symbolizer(
         proc = subprocess.run(
             [
                 tool,
-                "--obj", str(obj_path),
+                "--obj",
+                str(obj_path),
                 "--functions",
                 "--demangle",
                 address,
@@ -76,28 +77,38 @@ def symbolize_frames(
 
     out: List[str] = []
     failures = 0
+    changed = 0
     for frame in frames:
         m = _FRAME_RE.match(frame.strip())
         if not m or m.group("symbol"):
             out.append(frame)
+            failures += 1
             continue
         so_path = _find_so(Path(symbols_dir), Path(m.group("module")).name)
         if so_path is None:
             failures += 1
             out.append(frame)
             continue
-        symbol = _run_symbolizer(llvm_symbolizer, so_path, m.group("addr"))
+        # Normalize address: ensure 0x prefix and strip leading zeros.
+        addr = m.group("addr")
+        if addr.startswith("0x") or addr.startswith("0X"):
+            hex_part = addr[2:]
+        else:
+            hex_part = addr
+        addr = "0x" + (hex_part.lstrip("0") or "0")
+        symbol = _run_symbolizer(llvm_symbolizer, so_path, addr)
         if symbol is None:
             failures += 1
             out.append(frame)
         else:
-            out.append(
-                f"{m.group('prefix')}{m.group('addr')} {m.group('module')} "
-                f"({symbol})"
-            )
-    if failures == 0:
+            changed += 1
+            out.append(f"{m.group('prefix')}{m.group('addr')} {m.group('module')} ({symbol})")
+    if changed == 0:
+        # No frame was actually symbolized — do not claim success.
+        status = "unavailable"
+    elif failures == 0:
         status = "ok"
-    elif failures < len(frames):
+    elif changed > 0:
         status = "partial"
     else:
         status = "unavailable"

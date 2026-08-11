@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .atomic_io import atomic_write_json
 from .utils import utc_now_iso
 
 LOCK_FILENAME = ".sat-run.lock"
@@ -68,20 +67,56 @@ class RunLock:
 
     def acquire(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        existing = read_lock(self.output_dir)
-        if existing is not None and existing.alive and existing.pid != os.getpid():
-            raise RunLockError(
-                f"output directory {self.output_dir} is locked by run "
-                f"{existing.run_id} (pid {existing.pid}); remove "
-                f"{self.path.name} only for recovery scenarios"
-            )
+        import errno
+        import tempfile
+
+        # Write the payload to a temp file first, fsync, then atomically
+        # hard-link it to the lock path.  os.link fails with EEXIST when the
+        # lock already exists, making the acquire atomic without a window
+        # where the lock file is visible but empty.
         payload = {
             "run_id": self.run_id,
             "pid": os.getpid(),
             "device": self.device,
             "started_at": utc_now_iso(),
         }
-        atomic_write_json(self.path, payload)
+        tmp_fd, tmp_name = tempfile.mkstemp(
+            dir=str(self.output_dir),
+            prefix=".sat-run-lock.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2, ensure_ascii=False)
+                fh.flush()
+                os.fsync(fh.fileno())
+            try:
+                os.link(tmp_name, self.path)
+            except OSError as e:
+                if e.errno == errno.EEXIST:
+                    existing = read_lock(self.output_dir)
+                    if existing is not None and existing.alive and existing.pid != os.getpid():
+                        raise RunLockError(
+                            f"output directory {self.output_dir} is locked by "
+                            f"run {existing.run_id} (pid {existing.pid}); "
+                            f"remove {self.path.name} only for recovery "
+                            f"scenarios"
+                        ) from e
+                    # Stale lock: remove and retry once.
+                    clear_stale_lock(self.output_dir)
+                    try:
+                        os.link(tmp_name, self.path)
+                    except OSError as e2:
+                        raise RunLockError(
+                            f"cannot acquire lock on {self.output_dir}: {e2}"
+                        ) from e2
+                else:
+                    raise RunLockError(f"cannot acquire lock on {self.output_dir}: {e}") from e
+        finally:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
         self._held = True
 
     def release(self) -> None:
@@ -106,8 +141,7 @@ def check_recoverable(output_dir: Path) -> None:
     lock = read_lock(output_dir)
     if lock is not None and lock.alive and lock.pid != os.getpid():
         raise RunLockError(
-            f"cannot recover {output_dir}: run {lock.run_id} is still active "
-            f"(pid {lock.pid})"
+            f"cannot recover {output_dir}: run {lock.run_id} is still active (pid {lock.pid})"
         )
 
 

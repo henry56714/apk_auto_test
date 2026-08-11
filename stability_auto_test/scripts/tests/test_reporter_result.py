@@ -6,7 +6,13 @@ from pathlib import Path
 
 import jsonschema
 import pytest
-from sat.journal import STATUS_DETECTED, STATUS_FAILED, STATUS_PERSISTED
+from sat.journal import (
+    STATUS_DETECTED,
+    STATUS_DROPPED_BY_BACKPRESSURE,
+    STATUS_FAILED,
+    STATUS_PERSISTED,
+    STATUS_TIMED_OUT,
+)
 from sat.reporter import result as result_builder
 
 SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "report.schema.json"
@@ -30,20 +36,24 @@ def _make_csvs(output_dir: Path):
 def _make_incidents(output_dir: Path):
     inc_dir = output_dir / "incidents"
     inc_dir.mkdir()
-    (inc_dir / "java_crash_001.json").write_text(json.dumps({
-        "type": "java_crash",
-        "process": "com.example.app",
-        "pid": 1234,
-        "triggered_at": "2026-05-21 10:00:00.000",
-        "severity": "fatal",
-        "summary": "boom",
-        "evidence": {
-            "logcat_slice_file": "java_crash_001.txt",
-            "source": "logcat",
-            "dedup_count": 1,
-            "top_frames": ["at X.y(X.java:1)"],
-        },
-    }))
+    (inc_dir / "java_crash_001.json").write_text(
+        json.dumps(
+            {
+                "type": "java_crash",
+                "process": "com.example.app",
+                "pid": 1234,
+                "triggered_at": "2026-05-21 10:00:00.000",
+                "severity": "fatal",
+                "summary": "boom",
+                "evidence": {
+                    "logcat_slice_file": "java_crash_001.txt",
+                    "source": "logcat",
+                    "dedup_count": 1,
+                    "top_frames": ["at X.y(X.java:1)"],
+                },
+            }
+        )
+    )
 
 
 def test_build_and_schema_validate(tmp_path: Path):
@@ -81,27 +91,34 @@ def test_build_and_schema_validate(tmp_path: Path):
 
 def test_journal_failed_evidence_keeps_incident_in_report(tmp_path: Path):
     (tmp_path / "incident_journal.jsonl").write_text(
-        "\n".join([
-            json.dumps({
-                "journal_version": 1,
-                "event_id": "e-fail",
-                "status": STATUS_DETECTED,
-                "event_type": "anr",
-                "process": "com.example.app",
-                "pid": 1234,
-                "triggered_at": "2026-05-21 10:00:00.000",
-                "severity": "error",
-                "summary": "ANR: input dispatching timed out",
-                "source": "logcat",
-            }),
-            json.dumps({
-                "journal_version": 1,
-                "event_id": "e-fail",
-                "status": STATUS_FAILED,
-                "error_type": "RuntimeError",
-                "error": "trace pull failed",
-            }),
-        ]) + "\n",
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "journal_version": 1,
+                        "event_id": "e-fail",
+                        "status": STATUS_DETECTED,
+                        "event_type": "anr",
+                        "process": "com.example.app",
+                        "pid": 1234,
+                        "triggered_at": "2026-05-21 10:00:00.000",
+                        "severity": "error",
+                        "summary": "ANR: input dispatching timed out",
+                        "source": "logcat",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "journal_version": 1,
+                        "event_id": "e-fail",
+                        "status": STATUS_FAILED,
+                        "error_type": "RuntimeError",
+                        "error": "trace pull failed",
+                    }
+                ),
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
     started = datetime(2026, 5, 21, 10, 0, 0, tzinfo=timezone.utc)
@@ -129,21 +146,26 @@ def test_journal_failed_evidence_keeps_incident_in_report(tmp_path: Path):
 def test_journal_truncated_tail_marks_report_degraded(tmp_path: Path):
     journal = tmp_path / "incident_journal.jsonl"
     journal.write_text(
-        "\n".join([
-            json.dumps({
-                "journal_version": 1,
-                "event_id": "e1",
-                "status": STATUS_DETECTED,
-                "event_type": "java_crash",
-                "process": "com.example.app",
-                "pid": 1,
-                "triggered_at": "2026-05-21 10:00:00.000",
-                "severity": "fatal",
-                "summary": "x",
-            }),
-            json.dumps({"journal_version": 1, "event_id": "e1", "status": STATUS_PERSISTED}),
-            '{"journal_version": 1, "event_id": "e2", "status": "de',
-        ]) + "\n",
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "journal_version": 1,
+                        "event_id": "e1",
+                        "status": STATUS_DETECTED,
+                        "event_type": "java_crash",
+                        "process": "com.example.app",
+                        "pid": 1,
+                        "triggered_at": "2026-05-21 10:00:00.000",
+                        "severity": "fatal",
+                        "summary": "x",
+                    }
+                ),
+                json.dumps({"journal_version": 1, "event_id": "e1", "status": STATUS_PERSISTED}),
+                '{"journal_version": 1, "event_id": "e2", "status": "de',
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
     started = datetime(2026, 5, 21, 10, 0, 0, tzinfo=timezone.utc)
@@ -251,3 +273,114 @@ def test_reconnects_and_gaps_appear_in_report(tmp_path: Path):
     assert logcat["last_device_ts"] == "05-21 10:04:00.000"
     assert logcat["queue_backlog_peak"] == 2
     assert result["verdict"] == "inconclusive"
+
+
+def test_backpressure_status_is_not_timed_out(tmp_path: Path):
+    """Dropped-by-backpressure events must show their real status."""
+    (tmp_path / "incident_journal.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "journal_version": 1,
+                        "event_id": "e-bp",
+                        "status": STATUS_DETECTED,
+                        "event_type": "java_crash",
+                        "process": "com.example.app",
+                        "pid": 1234,
+                        "triggered_at": "2026-05-21 10:00:00.000",
+                        "severity": "fatal",
+                        "summary": "boom",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "journal_version": 1,
+                        "event_id": "e-bp",
+                        "status": STATUS_DROPPED_BY_BACKPRESSURE,
+                        "error_type": "queue_full",
+                        "error": "dump queue full",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    started = datetime(2026, 5, 21, 10, 0, 0, tzinfo=timezone.utc)
+    ended = datetime(2026, 5, 21, 10, 5, 0, tzinfo=timezone.utc)
+    result = result_builder.build(
+        output_dir=tmp_path,
+        package="com.example.app",
+        started_at=started,
+        ended_at=ended,
+        device={"serial": "x", "android_version": "14", "sdk_int": 34, "cpu_cores": 4},
+        config_effective={"package": "com.example.app"},
+        exit_code=0,
+        exit_reason="duration_elapsed",
+    )
+    inc = result["incidents"][0]
+    assert inc["evidence"]["evidence_status"] == STATUS_DROPPED_BY_BACKPRESSURE
+    # Must not appear as timed_out.
+    assert inc["evidence"]["evidence_status"] != STATUS_TIMED_OUT
+    assert result["event_pipeline"]["dropped_by_backpressure_count"] == 1
+    assert result["event_pipeline"]["timed_out_count"] == 0
+
+
+def test_pipeline_counts_fold_unique_event_terminal_state(tmp_path: Path):
+    """Two terminal records for the same event_id must count as 1, not 2."""
+    (tmp_path / "incident_journal.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "journal_version": 1,
+                        "event_id": "e-dup",
+                        "status": STATUS_DETECTED,
+                        "event_type": "java_crash",
+                        "process": "com.example.app",
+                        "pid": 1,
+                        "triggered_at": "2026-05-21 10:00:00.000",
+                        "severity": "fatal",
+                        "summary": "x",
+                    }
+                ),
+                # First terminal: timed_out
+                json.dumps(
+                    {
+                        "journal_version": 1,
+                        "event_id": "e-dup",
+                        "status": STATUS_TIMED_OUT,
+                        "error_type": "dump_shutdown_timeout",
+                    }
+                ),
+                # Second terminal (should not happen but must not double-count)
+                json.dumps(
+                    {
+                        "journal_version": 1,
+                        "event_id": "e-dup",
+                        "status": STATUS_PERSISTED,
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    started = datetime(2026, 5, 21, 10, 0, 0, tzinfo=timezone.utc)
+    ended = datetime(2026, 5, 21, 10, 5, 0, tzinfo=timezone.utc)
+    result = result_builder.build(
+        output_dir=tmp_path,
+        package="com.example.app",
+        started_at=started,
+        ended_at=ended,
+        device={"serial": "x", "android_version": "14", "sdk_int": 34, "cpu_cores": 4},
+        config_effective={"package": "com.example.app"},
+        exit_code=0,
+        exit_reason="duration_elapsed",
+    )
+    # detected=1, terminal(last-wins)=persisted=1, not 1 timed_out + 1 persisted.
+    assert result["event_pipeline"]["detected_count"] == 1
+    assert result["event_pipeline"]["persisted_count"] == 1
+    assert result["event_pipeline"]["timed_out_count"] == 0
+    assert len(result["incidents"]) == 1

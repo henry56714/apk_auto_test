@@ -106,7 +106,9 @@ class StabilityConfig:
     webhook_url: Optional[str] = None
     webhook_events: List[str] = field(
         default_factory=lambda: [
-            "on_first_fatal", "on_gate_failed", "on_device_offline",
+            "on_first_fatal",
+            "on_gate_failed",
+            "on_device_offline",
             "on_run_complete",
         ],
     )
@@ -153,6 +155,12 @@ class StabilityConfig:
         self.output_dir = Path(self.output_dir)
         if not self.package:
             raise ValueError("StabilityConfig.package is required")
+        if self.dedup_window_sec < 0:
+            raise ValueError("dedup_window_sec must be >= 0")
+        if self.max_incidents_per_type < 0:
+            raise ValueError("max_incidents_per_type must be >= 0")
+        if self.dump_shutdown_timeout_sec <= 0:
+            raise ValueError("dump_shutdown_timeout_sec must be > 0")
 
     def config_effective(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -242,7 +250,9 @@ class StabilityTest:
 
         try:
             self._device_info = preflight(
-                self._adb, serial=self.config.device, package=self.config.package,
+                self._adb,
+                serial=self.config.device,
+                package=self.config.package,
             )
         except DeviceSetupError as e:
             self._abort("setup_failed", exit_code=2, msg=str(e))
@@ -256,20 +266,26 @@ class StabilityTest:
             log.exception("app metadata collection failed")
 
         procs = wait_for_processes(
-            self._adb, self.config.package,
+            self._adb,
+            self.config.package,
             timeout_sec=self.config.wait_timeout_sec,
         )
         if not procs:
-            msg = (f"no processes for {self.config.package!r} within "
-                   f"{self.config.wait_timeout_sec}s")
+            msg = f"no processes for {self.config.package!r} within {self.config.wait_timeout_sec}s"
             self._abort("wait_timeout", exit_code=3, msg=msg)
             raise TimeoutError(msg)
 
         self._events_writer = CsvStreamWriter(
-            self.config.output_dir, "events", EVENTS_COLUMNS, EVENTS_SCHEMA_TAG,
+            self.config.output_dir,
+            "events",
+            EVENTS_COLUMNS,
+            EVENTS_SCHEMA_TAG,
         )
         self._lifecycle_writer = CsvStreamWriter(
-            self.config.output_dir, "lifecycle", LIFECYCLE_COLUMNS, LIFECYCLE_SCHEMA_TAG,
+            self.config.output_dir,
+            "lifecycle",
+            LIFECYCLE_COLUMNS,
+            LIFECYCLE_SCHEMA_TAG,
         )
         self._logcat_writer = LogStreamWriter(self.config.output_dir)
 
@@ -308,9 +324,7 @@ class StabilityTest:
             resource_risk_enabled=self.config.resource_risk_enabled,
             resource_risk_interval_sec=self.config.resource_risk_interval_sec,
             resource_fd_growth_threshold=self.config.resource_fd_growth_threshold,
-            resource_thread_growth_threshold=(
-                self.config.resource_thread_growth_threshold
-            ),
+            resource_thread_growth_threshold=(self.config.resource_thread_growth_threshold),
         )
         diagnosis = DiagnosisConfig(
             mapping_file=self.config.mapping_file,
@@ -320,7 +334,8 @@ class StabilityTest:
         )
 
         self._pool = CollectorPool(
-            self._adb, self.config.package,
+            self._adb,
+            self.config.package,
             events_writer=self._events_writer,
             lifecycle_writer=self._lifecycle_writer,
             logcat_writer=self._logcat_writer,
@@ -462,9 +477,16 @@ class StabilityTest:
         if self._bookmarks is not None:
             bookmarks = self._bookmarks.read_all()
 
-        device = (asdict(self._device_info) if self._device_info is not None
-                  else {"serial": self.config.device or "?",
-                        "android_version": "?", "sdk_int": 0, "cpu_cores": 0})
+        device = (
+            asdict(self._device_info)
+            if self._device_info is not None
+            else {
+                "serial": self.config.device or "?",
+                "android_version": "?",
+                "sdk_int": 0,
+                "cpu_cores": 0,
+            }
+        )
 
         # Prefer monotonic delta for duration_sec — it does not advance
         # while the OS suspends the process, so the reported duration
@@ -474,23 +496,17 @@ class StabilityTest:
         if self._started_monotonic is not None and self._ended_monotonic is not None:
             active_duration_sec = max(0.0, self._ended_monotonic - self._started_monotonic)
 
-        sample_failures = (self._pool.sample_failures()
-                           if self._pool is not None else {})
-        task_states = (self._pool.dump_task_states()
-                       if self._pool is not None else {})
-        dropped_by_cap = (self._pool.dropped_by_cap_count()
-                          if self._pool is not None else 0)
+        sample_failures = self._pool.sample_failures() if self._pool is not None else {}
+        task_states = self._pool.dump_task_states() if self._pool is not None else {}
+        dropped_by_cap = self._pool.dropped_by_cap_count() if self._pool is not None else 0
         dropped_by_backpressure = (
-            self._pool.dropped_by_backpressure_count()
-            if self._pool is not None else 0
+            self._pool.dropped_by_backpressure_count() if self._pool is not None else 0
         )
-        logcat_stats = (self._pool.collector_status().get("logcat", {})
-                        if self._pool is not None else {})
+        logcat_stats = (
+            self._pool.collector_status().get("logcat", {}) if self._pool is not None else {}
+        )
         parse_failures = sample_failures.get("logcat", 0)
-        adb_call_failures = (
-            getattr(self._adb, "failure_count", 0)
-            if self._adb is not None else 0
-        )
+        adb_call_failures = getattr(self._adb, "failure_count", 0) if self._adb is not None else 0
         health = compute_collector_health(
             logcat_stats=logcat_stats,
             planned_sec=active_duration_sec or 0.0,
@@ -499,20 +515,13 @@ class StabilityTest:
             parse_failures=parse_failures,
             adb_call_failures=adb_call_failures,
         )
-        collectors = (self._pool.collector_status()
-                      if self._pool is not None else {})
-        exit_info = (self._pool.exit_info_records()
-                     if self._pool is not None else [])
-        device_events = (self._pool.device_events()
-                         if self._pool is not None else [])
-        resource_risk = (self._pool.resource_risk_events()
-                         if self._pool is not None else [])
-        self_resource = (self._pool.self_resource_summary()
-                         if self._pool is not None else {})
+        collectors = self._pool.collector_status() if self._pool is not None else {}
+        exit_info = self._pool.exit_info_records() if self._pool is not None else []
+        device_events = self._pool.device_events() if self._pool is not None else []
+        resource_risk = self._pool.resource_risk_events() if self._pool is not None else []
+        self_resource = self._pool.self_resource_summary() if self._pool is not None else {}
         if collectors.get("logcat"):
-            collectors["logcat"]["queue_backlog_peak"] = (
-                self._pool.queue_backlog_peak()
-            )
+            collectors["logcat"]["queue_backlog_peak"] = self._pool.queue_backlog_peak()
         event_pipeline = {
             "detected_count": sum(task_states.values()),
             "persisted_count": task_states.get("persisted", 0),
@@ -553,9 +562,7 @@ class StabilityTest:
                 "max_restarts": self.config.policy_max_restarts,
                 "min_uptime_ratio": self.config.policy_min_uptime_ratio,
                 "min_coverage_ratio": self.config.min_coverage_ratio,
-                "fail_on_new_regression_only": (
-                    self.config.policy_fail_on_new_regression_only
-                ),
+                "fail_on_new_regression_only": (self.config.policy_fail_on_new_regression_only),
             },
             ci_mode=self.config.ci_mode,
             duration_sec=active_duration_sec,
@@ -570,8 +577,7 @@ class StabilityTest:
 
         if self.config.webhook_url:
             redactor = (
-                Redactor.from_config(self.config.redaction_regexes)
-                if self.config.redact else None
+                Redactor.from_config(self.config.redaction_regexes) if self.config.redact else None
             )
 
             def red(value: str) -> str:
@@ -585,31 +591,44 @@ class StabilityTest:
                 rate_limit_sec=self.config.webhook_rate_limit_sec,
             )
             fatal = [
-                i for i in result.get("incidents") or []
+                i
+                for i in result.get("incidents") or []
                 if i.get("type") in ("java_crash", "native_crash", "anr")
             ]
             if fatal:
-                notifier.notify("on_first_fatal", {
-                    "summary": red(fatal[0].get("summary", "")),
-                    "severity": red(fatal[0].get("severity", "fatal")),
-                })
+                notifier.notify(
+                    "on_first_fatal",
+                    {
+                        "summary": red(fatal[0].get("summary", "")),
+                        "severity": red(fatal[0].get("severity", "fatal")),
+                    },
+                )
             if self.config.ci_mode and not result.get("policy", {}).get("passed", True):
-                notifier.notify("on_gate_failed", {
-                    "summary": red("stability gate failed"),
-                    "severity": "error",
-                })
+                notifier.notify(
+                    "on_gate_failed",
+                    {
+                        "summary": red("stability gate failed"),
+                        "severity": "error",
+                    },
+                )
             if any(
                 e.get("event_type") in ("offline", "reboot")
                 for e in result.get("device_events") or []
             ):
-                notifier.notify("on_device_offline", {
-                    "summary": red("device gap detected"),
-                    "severity": "warning",
-                })
-            notifier.notify("on_run_complete", {
-                "summary": red(f"verdict={result.get('verdict')}"),
-                "severity": "info",
-            })
+                notifier.notify(
+                    "on_device_offline",
+                    {
+                        "summary": red("device gap detected"),
+                        "severity": "warning",
+                    },
+                )
+            notifier.notify(
+                "on_run_complete",
+                {
+                    "summary": red(f"verdict={result.get('verdict')}"),
+                    "severity": "info",
+                },
+            )
             result["notifications"] = notifier.stats()
             result_builder.write(result, self.config.output_dir)
             if self.config.emit_html:
@@ -624,9 +643,7 @@ class StabilityTest:
                     continue
                 try:
                     plugin = cls()
-                    outputs = list(
-                        runner.call(name, plugin.collect, self._adb) or []
-                    )
+                    outputs = list(runner.call(name, plugin.collect, self._adb) or [])
                     plugin_outputs[name] = outputs
                 except Exception:
                     runner.health[name] = "failed"

@@ -15,8 +15,8 @@ from .atomic_io import atomic_write_json
 POLICY_VERSION = "1.0"
 
 DEFAULT_PATTERNS: List[Pattern] = [
-    re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"),               # email
-    re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),                   # CN mobile
+    re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"),  # email
+    re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),  # CN mobile
     re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\b[=:]\s*\S+"),
     re.compile(r"[-+]?\d{1,2}\.\d{3,},\s*[-+]?\d{1,3}\.\d{3,}"),  # lat/lng
 ]
@@ -81,10 +81,30 @@ def redact_output_dir(output_dir: Path, redactor: Redactor) -> Dict:
             lines.append(redacted)
         log.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    # Also redact CSV files (events, lifecycle) which may contain raw process
+    # names, summaries, etc.
+    for csv_file in output_dir.glob("*.csv"):
+        lines = []
+        for raw in csv_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            redacted, n = redactor.redact(raw)
+            hits += n
+            lines.append(redacted)
+        csv_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Redact context files inside incidents/
+    for ctx_file in (output_dir / "incidents").glob("*_context.txt"):
+        lines = []
+        for raw in ctx_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            redacted, n = redactor.redact(raw)
+            hits += n
+            lines.append(redacted)
+        ctx_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     status_path = output_dir / "status.json"
     if status_path.exists():
         atomic_write_json(
-            status_path, redactor.redact_dict(json.loads(status_path.read_text())),
+            status_path,
+            redactor.redact_dict(json.loads(status_path.read_text())),
         )
 
     result["redaction"] = {
@@ -93,6 +113,7 @@ def redact_output_dir(output_dir: Path, redactor: Redactor) -> Dict:
     }
     atomic_write_json(report_path, result)
     from .reporter import html as html_renderer
+
     html_renderer.write(result, output_dir)
     return result["redaction"]
 
