@@ -8,13 +8,13 @@ consume from shell scripts.
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
+from .atomic_io import atomic_write_json
 from .utils import utc_now_iso
 
 log = logging.getLogger(__name__)
@@ -79,7 +79,6 @@ class StatusWriter:
         }
         with self._lock:
             try:
-                self.path.write_text(json.dumps(snapshot, indent=2),
-                                     encoding="utf-8")
+                atomic_write_json(self.path, snapshot)
             except OSError as e:
                 log.warning("status write failed: %s", e)

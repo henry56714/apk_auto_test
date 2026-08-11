@@ -13,11 +13,11 @@ The dispatcher in `pool.py` picks the dumper based on `event.event_type`.
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
+from ..atomic_io import atomic_write_json
 from ..detection import StabilityEvent
 from ..utils import safe_filename, safe_ts
 
@@ -54,8 +54,7 @@ def fetch_and_write_dropbox(
 
 
 def write_incident(path: Path, incident: Dict) -> None:
-    path.write_text(json.dumps(incident, indent=2, ensure_ascii=False),
-                    encoding="utf-8")
+    atomic_write_json(path, incident)
 
 
 def build_incident_dict(
@@ -80,10 +79,15 @@ def build_incident_dict(
         "dedup_count": 1,
         "fallback_reason": fallback_reason,
         "device_ts": event.device_ts,
+        "context_file": event.context_file,
     }
+    if event.context_meta:
+        evidence.update(event.context_meta)
     if extra_evidence:
         evidence.update(extra_evidence)
     return {
+        "event_id": event.event_id,
+        "run_id": event.run_id,
         "type": event.event_type,
         "process": event.process,
         "pid": event.pid,

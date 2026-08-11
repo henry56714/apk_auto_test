@@ -5,18 +5,50 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stability-auto-test"
 version = "0.1.0"
-description = "Generic Android APK stability auto-test: logcat/dropbox-driven Java crash / native crash / ANR / process death capture with structured reports"
+description = "Trusted Android stability black-box diagnostics: logcat/dropbox-driven Java crash, native crash, ANR and process-death capture with journal-based reports, CI gates and offline HTML"
 readme = "README.md"
 requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "stability_auto_test contributors"},
+]
+keywords = ["android", "stability", "testing", "adb", "crash", "anr", "ci"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = [
     "PyYAML>=6.0",
     "pandas>=2.0",
     "plotly>=5.18",
-    "jsonschema>=4.20",
 ]
+
+[project.urls]
+Homepage = "https://github.com/henry56714/apk_auto_test/tree/main/stability_auto_test"
+Repository = "https://github.com/henry56714/apk_auto_test"
+Documentation = "https://github.com/henry56714/apk_auto_test#readme"
 
 [project.scripts]
 stability-auto-test = "sat.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["sat*"]
+exclude = ["tests*", "sat.demo*", "build*", "*.egg-info"]
+
+[tool.setuptools.data-files]
+"share/stability-auto-test/schemas" = ["schemas/report.schema.json"]
+
+[tool.pytest.ini_options]
+markers = [
+    "stability_e2e: device end-to-end stability tests",
+    "exit_info: ApplicationExitInfo collector tests",
+]

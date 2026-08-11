@@ -20,8 +20,13 @@ argument-hint: <package> [duration] [--device serial] [--config path] [--output 
 | `--config` | YAML 配置路径 | — |
 | `--dedup-window` | 同事件去重窗口秒数 | 5 |
 | `--max-incidents-per-type` | 每类事件最大记录数 | 200 |
+| `--dump-shutdown-timeout` | stop() 等待在途 dump 的秒数 | 60 |
+| `--min-coverage` | 可信结论的最低覆盖率 | 0.99 |
+| `--mapping-file` / `--native-symbols-dir` / `--llvm-symbolizer` | 栈符号化输入 | 关闭 |
+| `--context-buffer-max-lines` / `--context-buffer-max-bytes` | 上下文环形缓冲上限 | 5000 / 4 MiB |
+| `--config-lenient` | 允许未知 YAML 字段 | 关闭 |
 
-> 检测开关（`--no-java-crash` / `--no-native-crash` / `--no-anr` / `--no-process-death`）、采集开关（`--no-dropbox`）、dump 拉取开关（`--no-tombstone-pull` / `--no-anr-trace-pull`）等进阶参数均在代码中有默认值，需要时可通过 `--config` YAML 覆盖，见 `${CLAUDE_SKILL_DIR}/scripts/config.example.yaml`。
+> 检测开关（`--no-java-crash` / `--no-native-crash` / `--no-anr` / `--no-process-death`）、dump 拉取开关（`--no-tombstone-pull` / `--no-anr-trace-pull`）等进阶参数均有默认值，可通过 `--config` YAML 覆盖，见 `${CLAUDE_SKILL_DIR}/scripts/config.example.yaml`。
 
 **简写识别**：`/stability-auto-test com.example.app 30m` → `--package com.example.app --duration 30m`
 
@@ -66,6 +71,18 @@ python -m sat \
 
 在前台执行，实时显示日志。采集期间 `<output_dir>/status.json` 每 10 秒刷新一次心跳（含当前进程列表 + 各类事件累计计数）。
 
+建议先执行自检：
+
+```bash
+python -m sat doctor --package <package> --json
+```
+
+如果进程被异常终止，可用以下命令从 `incident_journal.jsonl` 重建报告：
+
+```bash
+python -m sat recover --output <output_dir>
+```
+
 ## 步骤 4：弹出报告 + 输出总结
 
 采集命令结束后，**先弹出网页报告，再输出文字总结**。
@@ -80,9 +97,11 @@ open <output_dir>/report.html
 
 读取 `<output_dir>/report.json`，提取以下字段：
 - `run`：时长、退出原因、设备信息
+- `verdict` / `collection_health` / `coverage_ratio`：结论、观测健康度、覆盖率
 - `processes[*]`：`events`（4 类计数）、`restart_count`、`uptime_ratio`
-- `incidents[]`：触发时间、进程、类型、severity、summary、evidence
+- `incidents[]`：触发时间、进程、类型、severity、summary、evidence、event_id
 - `lifecycle_events[]`：new / restart / gone 事件
+- `event_pipeline`：detected / persisted / failed / timed_out / dropped_by_cap
 
 ### 4.3 输出稳定性总结
 
@@ -124,6 +143,16 @@ python -m sat --config config.example.yaml --package com.example.app --output ./
 
 # 冒烟（30秒验证连通性）
 python -m sat --package com.android.settings --duration 30s --output ./reports/smoke
+
+# 自检
+python -m sat doctor --package com.example.app --json | python -m json.tool
+
+# 崩溃恢复
+python -m sat recover --output ./reports/r1
+
+# CI 门禁 + JUnit
+python -m sat --package com.example.app --duration 30s --ci \
+  --junit ./reports/r1/junit.xml --output ./reports/r1
 ```
 
 完整参数：`python -m sat --help`

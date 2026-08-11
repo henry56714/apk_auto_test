@@ -20,9 +20,10 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
 EVENTS_COLUMNS: Sequence[str] = (
-    "timestamp", "event_type", "process_name", "pid", "severity", "summary",
+    "timestamp", "event_id", "run_id", "event_type", "process_name", "pid",
+    "severity", "summary",
 )
-EVENTS_SCHEMA_TAG = "stability_auto_test/events/v1"
+EVENTS_SCHEMA_TAG = "stability_auto_test/events/v3"
 
 LIFECYCLE_COLUMNS: Sequence[str] = (
     "timestamp", "process_name", "event", "old_pid", "new_pid", "gap_sec",

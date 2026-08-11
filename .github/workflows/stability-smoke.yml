@@ -1,0 +1,58 @@
+name: stability-smoke
+
+# Example CI smoke gate. No private device info is embedded here: connect a
+# physical device/emulator on the runner and pass the serial as a variable.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "stability_auto_test/**"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          pip install --upgrade pip
+          pip install -e stability_auto_test/scripts
+
+      - name: Unit tests and lint
+        run: |
+          cd stability_auto_test/scripts
+          python -m pytest tests -q
+          python -m ruff check sat tests
+
+      - name: Doctor
+        run: |
+          cd stability_auto_test/scripts
+          python -m sat doctor --package com.android.settings \
+            --device "${{ vars.SAT_DEVICE }}" --json | python -m json.tool
+
+      - name: 30s smoke with CI gate + JUnit
+        run: |
+          cd stability_auto_test/scripts
+          python -m sat --package com.android.settings \
+            --device "${{ vars.SAT_DEVICE }}" \
+            --duration 30s \
+            --output /tmp/sat-smoke \
+            --ci \
+            --junit /tmp/sat-smoke/junit.xml
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sat-smoke-report
+          path: |
+            /tmp/sat-smoke/report.json
+            /tmp/sat-smoke/report.html
+            /tmp/sat-smoke/incident_journal.jsonl
+            /tmp/sat-smoke/junit.xml
+          if-no-files-found: warn

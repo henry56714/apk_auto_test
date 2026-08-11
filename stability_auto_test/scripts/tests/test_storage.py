@@ -4,8 +4,6 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
 from sat.storage import (
     EVENTS_COLUMNS,
     EVENTS_SCHEMA_TAG,
@@ -23,6 +21,7 @@ def test_csv_writer_emits_schema_tag_and_header(tmp_path: Path):
     w = CsvStreamWriter(tmp_path, "events", EVENTS_COLUMNS, EVENTS_SCHEMA_TAG)
     w.write_row({
         "timestamp": "2026-05-21 10:00:00.000",
+        "event_id": "evt-1",
         "event_type": "java_crash",
         "process_name": "com.example.app",
         "pid": 123,
@@ -49,11 +48,11 @@ def test_csv_writer_rotates_on_hour_boundary(tmp_path: Path):
                         clock=clock)
     w.write_row({
         "timestamp": "x", "event_type": "anr", "process_name": "p",
-        "pid": 1, "severity": "error", "summary": "",
+        "event_id": "evt-2", "pid": 1, "severity": "error", "summary": "",
     })
     w.write_row({
         "timestamp": "y", "event_type": "anr", "process_name": "p",
-        "pid": 1, "severity": "error", "summary": "",
+        "event_id": "evt-3", "pid": 1, "severity": "error", "summary": "",
     })
     w.close()
     files = sorted(tmp_path.glob("events_*.csv"))

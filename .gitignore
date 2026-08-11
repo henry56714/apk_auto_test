@@ -30,3 +30,5 @@ tmp/
 
 # claude 文件
 .claude/
+stability_auto_test/scripts/build/
+development_progress

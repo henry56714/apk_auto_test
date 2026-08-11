@@ -15,11 +15,27 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from ..analyzers.exit_correlation import correlate_exit_info
+from ..analyzers.fingerprint import group_incidents
+from ..atomic_io import atomic_write_json
+from ..collectors.resource_risk import correlate_resource_risk
 from ..detection import ALL_EVENT_TYPES
+from ..health import compute_verdict
+from ..journal import (
+    JOURNAL_FILENAME,
+    STATUS_DETECTED,
+    STATUS_DROPPED_BY_BACKPRESSURE,
+    STATUS_DROPPED_BY_CAP,
+    STATUS_FAILED,
+    STATUS_PERSISTED,
+    STATUS_TIMED_OUT,
+    read_journal,
+)
+from ..policy import evaluate_policy, policy_from_dict
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.14"
 REPORT_FILENAME = "report.json"
 
 
@@ -114,9 +130,154 @@ def _load_incidents(incidents_dir: Path) -> List[Dict]:
         data["_source_file"] = json_file.name
         out.append(data)
     out.sort(key=lambda d: d.get("triggered_at", ""))
-    for i, incident in enumerate(out, start=1):
-        incident["id"] = f"incident-{i:03d}"
     return out
+
+
+def _journal_counts(records: List[Dict]) -> Dict[str, int]:
+    detected: set = set()
+    persisted = failed = timed_out = dropped = dropped_bp = 0
+    for rec in records:
+        event_id = rec.get("event_id")
+        if event_id:
+            detected.add(event_id)
+        status = rec.get("status")
+        if status == STATUS_PERSISTED:
+            persisted += 1
+        elif status == STATUS_FAILED:
+            failed += 1
+        elif status == STATUS_TIMED_OUT:
+            timed_out += 1
+        elif status == STATUS_DROPPED_BY_CAP:
+            dropped += 1
+        elif status == STATUS_DROPPED_BY_BACKPRESSURE:
+            dropped_bp += 1
+    return {
+        "detected_count": len(detected),
+        "persisted_count": persisted,
+        "failed_count": failed,
+        "timed_out_count": timed_out,
+        "dropped_by_cap_count": dropped,
+        "dropped_by_backpressure_count": dropped_bp,
+    }
+
+
+def _placeholder_incident(
+    rec: Dict,
+    evidence_status: str,
+    details: Optional[Dict] = None,
+) -> Dict:
+    src = details or rec
+    evidence = {
+        "evidence_status": evidence_status,
+        "source": src.get("source", "logcat"),
+        "reason": "incident evidence not persisted",
+    }
+    if rec.get("error_type"):
+        evidence["error_type"] = rec["error_type"]
+    if rec.get("error"):
+        evidence["error"] = rec["error"]
+    return {
+        "event_id": src.get("event_id") or rec.get("event_id"),
+        "type": src.get("event_type", "unknown"),
+        "process": src.get("process", ""),
+        "pid": src.get("pid", 0),
+        "triggered_at": src.get("triggered_at", ""),
+        "severity": src.get("severity", "error"),
+        "summary": src.get("summary", ""),
+        "evidence": evidence,
+    }
+
+
+def _build_incidents(
+    incidents_dir: Path,
+    journal_records: List[Dict],
+) -> Tuple[List[Dict], List[str]]:
+    """Merge incident JSON evidence with journal event facts.
+
+    Journal records are authoritative for *whether* an event happened; incident
+    JSON files supply evidence details. Failed/timed-out events get a
+    placeholder incident so a broken dumper can never make a run look clean.
+    Returns ``(incidents, warnings)``.
+    """
+    loaded = _load_incidents(incidents_dir)
+    by_id: Dict[str, Dict] = {}
+    without_id: List[Dict] = []
+    for inc in loaded:
+        eid = inc.get("event_id")
+        if eid:
+            by_id[eid] = inc
+        else:
+            without_id.append(inc)
+
+    incidents: List[Dict] = list(without_id)
+    warnings: List[str] = []
+    terminal_by_event: Dict[str, str] = {}
+    detected_ids = set()
+    detected_by_id: Dict[str, Dict] = {}
+    for rec in journal_records:
+        event_id = rec.get("event_id")
+        status = rec.get("status")
+        if not event_id:
+            continue
+        if status == STATUS_DETECTED:
+            detected_ids.add(event_id)
+            detected_by_id[event_id] = rec
+            continue
+        terminal_by_event[event_id] = status
+
+        if status == STATUS_DROPPED_BY_CAP:
+            continue  # counted in the pipeline, but not an incident
+
+        incident = by_id.pop(event_id, None)
+        if incident is None:
+            evidence_status = (
+                STATUS_PERSISTED if status == STATUS_PERSISTED
+                else STATUS_FAILED if status == STATUS_FAILED
+                else STATUS_TIMED_OUT
+            )
+            incident = _placeholder_incident(
+                rec, evidence_status, details=detected_by_id.get(event_id),
+            )
+            if status != STATUS_PERSISTED:
+                warnings.append(
+                    f"incident evidence missing for {event_id} "
+                    f"(journal status={status})"
+                )
+        else:
+            evidence = incident.setdefault("evidence", {})
+            evidence["evidence_status"] = status
+        incident["event_id"] = event_id
+        incidents.append(incident)
+
+    # Leftover incident JSONs with no journal record: keep for backward
+    # compatibility and mark them persisted (they did make it to disk).
+    for incident in by_id.values():
+        incident.setdefault("evidence", {}).setdefault("evidence_status", STATUS_PERSISTED)
+        incidents.append(incident)
+
+    # Journal entries that never reached a terminal state (e.g. process was
+    # killed mid-run): surface them as failed so they cannot be silently lost.
+    orphaned = detected_ids - set(terminal_by_event)
+    if orphaned:
+        warnings.append(
+            f"{len(orphaned)} journal event(s) ended without a terminal status"
+        )
+        for rec in journal_records:
+            eid = rec.get("event_id")
+            if eid in orphaned:
+                placeholder = _placeholder_incident(
+                    rec, STATUS_FAILED, details=detected_by_id.get(eid),
+                )
+                placeholder["evidence"]["reason"] = (
+                    "journal ended before a terminal status was recorded"
+                )
+                incidents.append(placeholder)
+                orphaned.discard(eid)
+
+    incidents.sort(key=lambda d: d.get("triggered_at", ""))
+    for i, incident in enumerate(incidents, start=1):
+        incident["id"] = f"incident-{i:03d}"
+    return incidents, warnings
 
 
 def _build_process(
@@ -176,6 +337,19 @@ def build(
     exit_reason: str,
     bookmarks: Optional[List[Dict]] = None,
     sample_failures: Optional[Dict[str, int]] = None,
+    event_pipeline: Optional[Dict[str, int]] = None,
+    run_id: Optional[str] = None,
+    app_metadata: Optional[Dict] = None,
+    exit_info: Optional[List[Dict]] = None,
+    device_events: Optional[List[Dict]] = None,
+    resource_risk: Optional[List[Dict]] = None,
+    self_resource: Optional[Dict] = None,
+    collector_health: Optional[Dict] = None,
+    collectors: Optional[Dict[str, Dict]] = None,
+    policy_config: Optional[Dict] = None,
+    ci_mode: bool = False,
+    recovered: bool = False,
+    recovered_at: Optional[str] = None,
     duration_sec: Optional[float] = None,
 ) -> Dict:
     """Build the canonical report dict.
@@ -189,13 +363,44 @@ def build(
     output_dir = Path(output_dir)
     incidents_dir = output_dir / "incidents"
     sample_failures = sample_failures or {}
+    event_pipeline = {
+        "detected_count": 0,
+        "persisted_count": 0,
+        "failed_count": 0,
+        "timed_out_count": 0,
+        "dropped_by_cap_count": 0,
+        "dropped_by_backpressure_count": 0,
+        **(event_pipeline or {}),
+    }
 
     events_files = sorted(output_dir.glob("events_*.csv"))
     life_files = sorted(output_dir.glob("lifecycle_*.csv"))
     logcat_files = sorted(output_dir.glob("logcat_*.log"))
+    journal_path = output_dir / JOURNAL_FILENAME
+    journal_records, recovery_warnings = read_journal(journal_path)
 
     life_df = _read_csvs(life_files)
-    incidents = _load_incidents(incidents_dir)
+    incidents, incident_warnings = _build_incidents(incidents_dir, journal_records)
+    exit_records = correlate_exit_info(incidents, list(exit_info or []))
+    correlate_resource_risk(incidents, list(resource_risk or []))
+    recovery_warnings = recovery_warnings + incident_warnings
+    if journal_records:
+        event_pipeline = _journal_counts(journal_records)
+    collector_health = collector_health or {
+        "health": "healthy",
+        "coverage_ratio": 1.0,
+        "reasons": [],
+    }
+    collection_health = collector_health.get("health", "healthy")
+    if recovery_warnings and collection_health == "healthy":
+        collection_health = "degraded"
+    health_reasons = list(collector_health.get("reasons") or [])
+    if recovery_warnings and "journal recovery warnings" not in health_reasons:
+        health_reasons.append(
+            f"journal recovery warnings: {len(recovery_warnings)}"
+        )
+    coverage_ratio = round(float(collector_health.get("coverage_ratio", 1.0)), 4)
+    verdict = compute_verdict(collection_health, incidents=incidents)
 
     process_names = set()
     if not life_df.empty and "process_name" in life_df.columns:
@@ -210,6 +415,12 @@ def build(
         for name in sorted(process_names)
     ]
 
+    policy = policy_from_dict(policy_config or {})
+    policy_result = evaluate_policy(
+        incidents, processes, coverage_ratio, policy,
+    )
+    policy_result["enabled"] = bool(ci_mode)
+
     if duration_sec is None:
         duration_sec = max(0.0, (ended_at - started_at).total_seconds())
     else:
@@ -223,25 +434,42 @@ def build(
             "duration_sec": round(duration_sec, 3),
             "exit_code": int(exit_code),
             "exit_reason": exit_reason,
+            "run_id": run_id,
+            "app_version_name": (app_metadata or {}).get("app_version_name", ""),
+            "app_version_code": (app_metadata or {}).get("app_version_code", ""),
+            "build_id": (app_metadata or {}).get("build_id", ""),
+            "git_sha": (app_metadata or {}).get("git_sha", ""),
+            "recovered": bool(recovered),
+            "recovered_at": recovered_at,
             "device": device,
             "package": package,
             "config_effective": config_effective,
         },
         "processes": processes,
         "incidents": incidents,
+        "issue_groups": group_incidents(incidents),
+        "exit_info": exit_records,
+        "device_events": list(device_events or []),
+        "resource_risk": list(resource_risk or []),
+        "self_resource": self_resource or {},
+        "event_pipeline": event_pipeline,
+        "collection_health": collection_health,
+        "coverage_ratio": coverage_ratio,
+        "verdict": verdict,
+        "collectors": collectors or {},
+        "policy": policy_result,
+        "recovery_warnings": recovery_warnings,
         "lifecycle_events": _build_lifecycle_events(life_df),
         "bookmarks": list(bookmarks or []),
         "data_files": {
             "events": [p.name for p in events_files],
             "lifecycle": [p.name for p in life_files],
             "logcat": [p.name for p in logcat_files],
+            "journal": [journal_path.name] if journal_path.exists() else [],
         },
     }
 
 
 def write(result: Dict, output_dir: Path) -> Path:
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / REPORT_FILENAME
-    path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+    path = Path(output_dir) / REPORT_FILENAME
+    return atomic_write_json(path, result)

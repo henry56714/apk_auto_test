@@ -112,16 +112,17 @@ with PerfTest(cfg) as t:
 **stability_auto_test**
 
 ```python
-from sat import StabilityConfig, StabilityTest
+from sat.api import StabilityConfig
 
 cfg = StabilityConfig(
     package="com.example.app",
-    duration_sec=1800,
     output_dir="./reports/run1",
 )
-with StabilityTest(cfg) as t:
-    t.run()
-# t.result 即完整的 report.json 数据
+print(cfg.package, cfg.output_dir)
+# 嵌入测试框架：
+# with StabilityTest(cfg) as t:
+#     t.bookmark("scenario_a_done")
+# t.result 即完整的 report.json 数据（run / processes / incidents / verdict）
 ```
 
 ### 方式三：独立 CLI
@@ -176,15 +177,26 @@ reports/run1/
 ```
 reports/run1/
 ├── report.json               ← 权威结果（AI / CI 可直接读）
-├── report.html               ← Plotly 事件时间轴 + 进程稳定性总表
+├── report.html               ← 自包含离线 Plotly 报告
+├── status.json               ← 实时心跳（进程 / 计数 / collector 状态）
+├── incident_journal.jsonl    ← 事件事实日志；`sat recover` 据此重建报告
 ├── events_*.csv              ← 事件流，按小时滚动
 ├── lifecycle_*.csv           ← 进程生命周期，按小时滚动
 ├── logcat_*.log              ← 原始 logcat，按小时滚动
 └── incidents/
     ├── java_crash_<ts>_<proc>_pid<n>.json  ← 异常类 + 调用栈 + 元数据
+    ├── ..._context.txt                     ← PRE/EVENT/POST 上下文切片
     ├── native_crash_<ts>_<proc>_pid<n>.tombstone  （可访问时）
     ├── anr_<ts>_<proc>_pid<n>.trace               （可访问时）
     └── ...
+```
+
+诊断与恢复：
+
+```bash
+cd stability_auto_test/scripts
+python -m sat doctor --package com.example.app --json | python -m json.tool
+python -m sat recover --output ./reports/run1
 ```
 
 详细文档：[`perf_auto_test/README.md`](perf_auto_test/README.md) · [`stability_auto_test/README.md`](stability_auto_test/README.md)

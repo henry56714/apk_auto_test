@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.7",
+  "issue_groups": [
+    {
+      "fingerprint": "fpA",
+      "type": "anr",
+      "occurrence_count": 2,
+      "affected_devices": ["dev-1", "dev-2"],
+      "first_seen_at": "2026-05-21 10:00:00.000",
+      "last_seen_at": "2026-05-21 10:05:00.000"
+    },
+    {
+      "fingerprint": "fpC",
+      "type": "native_crash",
+      "occurrence_count": 3,
+      "affected_devices": ["dev-1", "dev-2"]
+    },
+    {
+      "fingerprint": "fpD",
+      "type": "java_crash",
+      "occurrence_count": 1,
+      "affected_devices": ["dev-2"]
+    }
+  ]
+}

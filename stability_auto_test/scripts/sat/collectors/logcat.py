@@ -15,6 +15,7 @@ import logging
 import re
 import subprocess
 import threading
+import time
 from typing import Callable, Iterable, List, Optional, Sequence
 
 log = logging.getLogger(__name__)
@@ -40,12 +41,16 @@ class LogcatStream:
         buffers: Sequence[str] = DEFAULT_BUFFERS,
         reconnect_backoff_sec: float = RECONNECT_BACKOFF_BASE_SEC,
         popen_fn: Optional[Callable] = None,
+        now_fn: Callable[[], float] = time.time,
+        initial_device_ts: Optional[str] = None,
     ) -> None:
         self.serial = serial
         self.adb_path = adb_path
         self.buffers = list(buffers)
         self.reconnect_backoff = reconnect_backoff_sec
         self._popen = popen_fn or subprocess.Popen
+        self._now = now_fn
+        self._initial_device_ts = initial_device_ts
 
         self._stop = threading.Event()
         self._proc: Optional[subprocess.Popen] = None
@@ -53,6 +58,12 @@ class LogcatStream:
         self._reconnects: int = 0
         self._lines_read: int = 0
         self._read_failures: int = 0
+        self._started_at: Optional[float] = None
+        self._ended_at: Optional[float] = None
+        self._conn_started_at: Optional[float] = None
+        self._gap_started_at: Optional[float] = None
+        self._up_intervals: List[tuple] = []
+        self._gap_intervals: List[tuple] = []
 
     @property
     def stats(self) -> dict:
@@ -61,10 +72,23 @@ class LogcatStream:
             "reconnects": self._reconnects,
             "read_failures": self._read_failures,
             "last_device_ts": self._last_device_ts,
+            "started_at": self._started_at,
+            "ended_at": self._ended_at,
+            "up_intervals": list(self._up_intervals),
+            "gap_intervals": list(self._gap_intervals),
+            "backlog_peak": 0,
         }
 
     def stop(self) -> None:
         self._stop.set()
+        now = self._now()
+        if self._conn_started_at is not None:
+            self._up_intervals.append((self._conn_started_at, now))
+            self._conn_started_at = None
+        if self._gap_started_at is not None:
+            self._gap_intervals.append((self._gap_started_at, now))
+            self._gap_started_at = None
+        self._ended_at = now
         self._kill_proc()
 
     def _kill_proc(self) -> None:
@@ -91,9 +115,10 @@ class LogcatStream:
         cmd += ["logcat", "-v", "threadtime"]
         for b in self.buffers:
             cmd += ["-b", b]
-        if self._last_device_ts is not None:
+        resume_ts = self._last_device_ts or self._initial_device_ts
+        if resume_ts is not None:
             # logcat -T '<ts>' resumes from the given device-side timestamp.
-            cmd += ["-T", self._last_device_ts]
+            cmd += ["-T", resume_ts]
         return cmd
 
     def lines(self) -> Iterable[str]:
@@ -129,6 +154,12 @@ class LogcatStream:
                 continue
 
             backoff = self.reconnect_backoff  # successful spawn → reset backoff
+            if self._started_at is None:
+                self._started_at = self._now()
+            if self._gap_started_at is not None:
+                self._gap_intervals.append((self._gap_started_at, self._now()))
+                self._gap_started_at = None
+            self._conn_started_at = self._now()
             try:
                 for line in stdout:
                     if self._stop.is_set():
@@ -143,6 +174,13 @@ class LogcatStream:
                 log.exception("error reading logcat; will reconnect")
             finally:
                 self._kill_proc()
+
+            now = self._now()
+            if self._conn_started_at is not None:
+                self._up_intervals.append((self._conn_started_at, now))
+                self._conn_started_at = None
+            if not self._stop.is_set():
+                self._gap_started_at = now
 
             if self._stop.is_set():
                 return

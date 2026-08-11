@@ -3,10 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from sat.collectors.dropbox import DropboxFetcher, parse_dropbox_dump
-from sat.detection import EVENT_ANR, EVENT_JAVA_CRASH, EVENT_NATIVE_CRASH
+from sat.detection import EVENT_JAVA_CRASH, EVENT_NATIVE_CRASH
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

@@ -8,8 +8,14 @@ discovery:
 collectors:
   logcat:
     buffers: [main, system, events, crash]
-  dropbox:
-    poll_interval_sec: 30
+  device_health:
+    interval_sec: 5
+    reboot_policy: wait-and-resume   # continue | fail-fast | wait-and-resume
+  resource_risk:
+    enabled: true
+    interval_sec: 30
+    fd_growth_threshold: 200
+    thread_growth_threshold: 50
 
 detection:
   enable_java_crash: true
@@ -18,3 +24,57 @@ detection:
   enable_process_death: true
   dedup_window_sec: 5         # 主机时间兜底窗口（仅用于无 device_ts 的 watcher 事件）
   # device_ts_window_sec: 10 # 设备时间主窗口（内部默认 10s；logcat 与 dropbox 跨源去重依赖此值）
+
+dumps:
+  pre_context_sec: 30
+  post_context_sec: 10
+  max_incidents_per_type: 200
+  dump_shutdown_timeout_sec: 60   # stop() 等待在途 dump 任务的秒数，超时记为 timed_out
+  context_retention_sec: 100      # logcat 环形缓冲保留时长（默认 pre+post+60）
+  context_buffer_max_lines: 5000
+  context_buffer_max_bytes: 4194304
+  pull_tombstone: true
+  pull_anr_trace: true
+
+health:
+  min_coverage_ratio: 0.99   # coverage 低于此值时 verdict 为 inconclusive
+
+diagnosis:
+  mapping_file: null                 # Java 反混淆（ProGuard/R8 mapping）
+  retrace_command: null              # 外部 retrace 工具（缺省用内置解析器）
+  native_symbols_dir: null           # 未 strip 的 .so 目录树
+  llvm_symbolizer_path: null         # llvm-symbolizer 路径
+
+policy:
+  fail_on: [java_crash, native_crash, anr]
+  max_process_death: 0
+  max_anr: 0
+  max_restarts: 0
+  min_uptime_ratio: 0.99
+  min_coverage_ratio: 0.99
+  fail_on_new_regression_only: false
+
+quota:
+  max_disk_bytes: null              # 硬配额：剩余空间低于此值停止大文件证据
+  max_log_file_bytes: 536870912     # 单 logcat 文件上限（默认 512 MiB）
+  log_retention_hours: 24
+  max_queue_size: 50
+  evidence_sample_every_n: 5        # 首次与每第 N 次保存完整证据
+  self_monitor_interval_sec: 60     # 工具自身 RSS/线程/FD/队列采样
+
+output:
+  dashboard: false                  # localhost-only 实时看板（SSE）
+  emit_html: true
+  status_interval_sec: 10
+
+redaction:
+  enabled: false
+  regexes: []                       # 追加脱敏正则（内置 email/手机号/token/坐标）
+
+webhook:
+  url: null                         # 通用 webhook（可选）
+  events: [on_first_fatal, on_gate_failed, on_device_offline, on_run_complete]
+  rate_limit_sec: 60
+
+plugins:
+  enabled: false                    # 默认禁用第三方插件

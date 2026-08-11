@@ -58,6 +58,14 @@ class Adb:
         self.retries = retries
         self.adb_path = adb_path
         self._sem = threading.BoundedSemaphore(concurrency)
+        self._calls = 0
+        self._failures = 0
+        self._counters_lock = threading.Lock()
+
+    @property
+    def failure_count(self) -> int:
+        with self._counters_lock:
+            return self._failures
 
     def _base_cmd(self) -> List[str]:
         cmd = [self.adb_path]
@@ -76,6 +84,8 @@ class Adb:
         timeout_v = self.timeout if timeout is None else timeout
         retries_v = self.retries if retries is None else retries
         cmd = self._base_cmd() + list(args)
+        with self._counters_lock:
+            self._calls += 1
 
         last_exc: Optional[Exception] = None
         for attempt in range(retries_v + 1):
@@ -117,6 +127,8 @@ class Adb:
                 time.sleep(backoff)
 
         assert last_exc is not None
+        with self._counters_lock:
+            self._failures += 1
         raise last_exc
 
     def shell(self, command: str, **kwargs) -> AdbResult:

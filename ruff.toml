@@ -8,3 +8,5 @@ select = ["E", "F", "I"]
 
 [lint.per-file-ignores]
 "**/tests/**" = ["E501"]
+"stability_auto_test/scripts/sat/reporter/html.py" = ["E501"]
+"stability_auto_test/scripts/sat/demo/generate_demo.py" = ["E501"]

@@ -21,6 +21,12 @@ def test_html_render_includes_all_sections(tmp_path: Path):
             "name": "com.example.app", "uptime_ratio": 1.0, "restart_count": 0,
             "events": {"java_crash": 1, "native_crash": 0, "anr": 0, "process_death": 0},
         }],
+        "device_events": [{
+            "event_type": "reboot",
+            "started_at": 1700000000.0,
+            "ended_at": 1700000030.0,
+            "detail": "boot_id changed",
+        }],
         "incidents": [{
             "id": "incident-001",
             "type": "java_crash",
@@ -45,6 +51,8 @@ def test_html_render_includes_all_sections(tmp_path: Path):
     assert "Stability report" in text
     assert "com.example.app" in text
     assert "Plotly.newPlot" in text
+    assert "device-events-data" in text
+    assert "设备事件" in text
     # Counters block + incident details rendered
     assert "Java crash" in text
     assert "boom" in text

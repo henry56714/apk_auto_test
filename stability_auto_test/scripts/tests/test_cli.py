@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
-
 from sat import cli
 from sat.cli import _parse_duration, build_config, build_parser
 
@@ -67,3 +64,89 @@ def test_cli_main_returns_setup_on_missing_package(tmp_path: Path):
     # Without any args, --package is missing → EXIT_SETUP (2)
     rc = cli.main([])
     assert rc == cli.EXIT_SETUP
+
+
+class _FakeStabilityTest:
+    def __init__(self, cfg):
+        _FakeStabilityTest._last_instance = self
+        self.cfg = cfg
+        self._result = None
+        self._stopped = False
+        self.exit_calls = []
+
+    def start(self):
+        pass
+
+    def stop(self):
+        self._stopped = True
+        self._result = self._make_result()
+
+    def set_exit(self, code, reason):
+        self.exit_calls.append((code, reason))
+
+    def _make_result(self):
+        verdict = "unstable" if self.cfg.package == "com.example.crash" else "stable"
+        return {
+            "verdict": verdict,
+            "policy": {
+                "enabled": self.cfg.ci_mode,
+                "passed": self.cfg.package != "com.example.crash",
+            },
+        }
+
+
+def test_cli_default_mode_returns_zero_on_crash(monkeypatch):
+    monkeypatch.setattr(cli, "StabilityTest", _FakeStabilityTest)
+    rc = cli.main([
+        "--package", "com.example.crash", "--duration", "1s", "--output", "/tmp/x",
+    ])
+    assert rc == cli.EXIT_OK
+
+
+def test_cli_ci_mode_returns_gate_failed_on_crash(monkeypatch):
+    monkeypatch.setattr(cli, "StabilityTest", _FakeStabilityTest)
+    rc = cli.main([
+        "--package", "com.example.crash", "--ci", "--duration", "1s",
+        "--output", "/tmp/x",
+    ])
+    assert rc == cli.EXIT_GATE_FAILED
+
+
+def test_cli_ci_mode_returns_zero_when_clean(monkeypatch):
+    monkeypatch.setattr(cli, "StabilityTest", _FakeStabilityTest)
+    rc = cli.main([
+        "--package", "com.example.app", "--ci", "--duration", "1s",
+        "--output", "/tmp/x",
+    ])
+    assert rc == cli.EXIT_OK
+
+
+def test_cli_inconclusive_returns_exit_4(monkeypatch):
+    class Inconclusive(_FakeStabilityTest):
+        def _make_result(self):
+            return {
+                "verdict": "inconclusive",
+                "policy": {"enabled": True, "passed": True},
+            }
+
+    monkeypatch.setattr(cli, "StabilityTest", Inconclusive)
+    rc = cli.main([
+        "--package", "com.example.app", "--ci", "--duration", "1s",
+        "--output", "/tmp/x",
+    ])
+    assert rc == cli.EXIT_INCONCLUSIVE
+
+
+def test_cli_interrupt_records_exit_130_in_report(monkeypatch):
+    monkeypatch.setattr(cli, "StabilityTest", _FakeStabilityTest)
+
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", interrupt)
+    rc = cli.main([
+        "--package", "com.example.app", "--duration", "1s", "--output", "/tmp/x",
+    ])
+    assert rc == cli.EXIT_SIGINT
+    assert any(code == cli.EXIT_SIGINT and reason == "interrupted"
+               for code, reason in cli.StabilityTest._last_instance.exit_calls)

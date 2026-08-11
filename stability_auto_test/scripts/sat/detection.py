@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -104,6 +104,14 @@ class StabilityEvent:
     # Original device-side timestamp from the logcat line (parser preserves it
     # verbatim; the canonical `triggered_at` uses host wall-clock observation).
     device_ts: Optional[str] = None
+    # Stable event identifier assigned by the dispatcher; referenced by the
+    # events CSV, incident journal and report.
+    event_id: Optional[str] = None
+    # Context slice written by the pool before the dumper runs.
+    context_file: Optional[str] = None
+    context_meta: Optional[Dict] = None
+    # Run identifier assigned by the API layer; propagated to every artifact.
+    run_id: Optional[str] = None
 
 
 # ── logcat threadtime parser ──────────────────────────────────────────────────
@@ -122,7 +130,10 @@ ANR_REASON_RE = re.compile(r"^Reason:\s*(?P<reason>.*)$")
 
 JAVA_PROCESS_RE = re.compile(r"^Process:\s*(?P<proc>\S+?)(?:,\s*PID:\s*(?P<pid>\d+))?\s*$")
 JAVA_FRAME_RE = re.compile(r"^\s*at\s+(?P<frame>.+)$")
-JAVA_EXC_RE = re.compile(r"^(?P<exc>[A-Za-z_][\w.$]*(?:Exception|Error|Throwable))(?::\s*(?P<msg>.*))?$")
+JAVA_EXC_RE = re.compile(
+    r"^(?P<exc>[A-Za-z_][\w.$]*(?:Exception|Error|Throwable))"
+    r"(?::\s*(?P<msg>.*))?$"
+)
 
 # libc/DEBUG native crash lines:
 LIBC_FATAL_RE = re.compile(
@@ -130,8 +141,14 @@ LIBC_FATAL_RE = re.compile(
     r"(?:.*?fault addr\s+(?P<addr>\S+))?"
     r".*?pid\s+(?P<pid>\d+)\s+\((?P<proc>[^)]+)\)"
 )
-DEBUG_PID_RE = re.compile(r"^pid:\s*(?P<pid>\d+),\s*tid:\s*\d+(?:,\s*name:\s*\S+)?\s*>>>\s*(?P<proc>\S+)\s*<<<")
-DEBUG_SIGNAL_RE = re.compile(r"^signal\s+(?P<num>\d+)\s+\((?P<name>[A-Z]+)\)(?:.*?fault addr\s+(?P<addr>\S+))?")
+DEBUG_PID_RE = re.compile(
+    r"^pid:\s*(?P<pid>\d+),\s*tid:\s*\d+(?:,\s*name:\s*\S+)?"
+    r"\s*>>>\s*(?P<proc>\S+)\s*<<<"
+)
+DEBUG_SIGNAL_RE = re.compile(
+    r"^signal\s+(?P<num>\d+)\s+\((?P<name>[A-Z]+)\)"
+    r"(?:.*?fault addr\s+(?P<addr>\S+))?"
+)
 DEBUG_FRAME_RE = re.compile(r"^\s*#(?P<idx>\d+)\s+pc\s+\S+\s+(?P<rest>.+)$")
 
 # Events-buffer tags carry comma-separated payloads inside brackets.

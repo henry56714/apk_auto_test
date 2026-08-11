@@ -4,8 +4,8 @@ import io
 from unittest.mock import MagicMock
 
 import pytest
-
 from sat.collectors.logcat import LogcatStream, _extract_device_ts
+from sat.health import compute_collector_health
 
 
 def test_extract_device_ts_threadtime_default():
@@ -73,3 +73,89 @@ def test_logcat_stream_resume_arg_when_reconnecting():
     # `-T '<ts>'` must be present after the buffer args.
     assert "-T" in cmd
     assert cmd[cmd.index("-T") + 1] == "05-21 10:00:00.001"
+
+
+def test_logcat_stream_stats_track_up_intervals_and_gaps():
+    fake_proc1 = MagicMock()
+    fake_proc1.stdout = io.StringIO(
+        "05-21 10:00:00.100  1 1 I tag: one\n"
+        "05-21 10:00:00.200  1 1 I tag: two\n"
+    )
+    fake_proc1.stderr = io.StringIO("")
+    fake_proc1.terminate = MagicMock()
+    fake_proc1.wait = MagicMock(return_value=0)
+    fake_proc1.kill = MagicMock()
+
+    fake_proc2 = MagicMock()
+    fake_proc2.stdout = io.StringIO("")
+    fake_proc2.stderr = io.StringIO("")
+    fake_proc2.terminate = MagicMock()
+    fake_proc2.wait = MagicMock(return_value=0)
+    fake_proc2.kill = MagicMock()
+
+    state = {"n": 0}
+
+    def popen(cmd, **kwargs):
+        state["n"] += 1
+        if state["n"] == 1:
+            return fake_proc1
+        stream._stop.set()
+        return fake_proc2
+
+    clock = {"now": 100.0}
+
+    def now_fn():
+        clock["now"] += 0.25
+        return clock["now"]
+
+    stream = LogcatStream(
+        serial=None,
+        buffers=["main"],
+        reconnect_backoff_sec=0.0,
+        popen_fn=popen,
+        now_fn=now_fn,
+    )
+    list(stream.lines())
+    stream.stop()
+    stats = stream.stats
+
+    assert stats["reconnects"] >= 1
+    assert len(stats["up_intervals"]) >= 2
+    assert len(stats["gap_intervals"]) >= 1
+    assert stats["up_intervals"][0][1] <= stats["gap_intervals"][0][0]
+    assert stats["started_at"] is not None
+    assert stats["ended_at"] is not None
+
+
+def test_coverage_health_healthy_full_run():
+    health = compute_collector_health(
+        logcat_stats={
+            "up_intervals": [(100.0, 199.0)],
+            "reconnects": 0,
+        },
+        planned_sec=100.0,
+        min_coverage_ratio=0.99,
+    )
+    assert health.coverage_ratio >= 0.99
+    assert health.health == "healthy"
+
+
+def test_coverage_health_degraded_with_twenty_percent_gap():
+    health = compute_collector_health(
+        logcat_stats={
+            "up_intervals": [(100.0, 150.0), (170.0, 200.0)],
+            "reconnects": 1,
+        },
+        planned_sec=100.0,
+        min_coverage_ratio=0.99,
+    )
+    assert health.coverage_ratio == pytest.approx(0.8, abs=0.01)
+    assert health.health == "degraded"
+
+
+def test_coverage_health_inconclusive_when_never_collected():
+    health = compute_collector_health(
+        logcat_stats={"up_intervals": []},
+        planned_sec=100.0,
+    )
+    assert health.health == "inconclusive"

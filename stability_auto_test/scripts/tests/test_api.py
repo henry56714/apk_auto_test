@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from sat.api import StabilityConfig, StabilityTest
+from sat.detection import EVENT_JAVA_CRASH, StabilityEvent
 from sat.device import DeviceInfo, DeviceSetupError
 from sat.discovery import Process
 
@@ -43,7 +43,10 @@ def _patch_preflight(monkeypatch):
 
 def test_context_manager_writes_report(tmp_path: Path, monkeypatch):
     _patch_preflight(monkeypatch)
-    discover = lambda adb, pkg: [Process(pid=1234, name=pkg)]
+
+    def discover(adb, pkg):
+        return [Process(pid=1234, name=pkg)]
+
     monkeypatch.setattr("sat.api.wait_for_processes",
                         lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)])
 
@@ -51,10 +54,40 @@ def test_context_manager_writes_report(tmp_path: Path, monkeypatch):
         t.bookmark("scenario_a_done")
 
     report = json.loads((tmp_path / "out" / "report.json").read_text())
-    assert report["schema_version"] == "1.0"
+    assert report["schema_version"] == "1.14"
     assert report["run"]["package"] == "com.example.app"
     assert report["run"]["exit_code"] == 0
     assert any(b["label"] == "scenario_a_done" for b in report["bookmarks"])
+
+
+def test_late_incident_is_drained_into_report(tmp_path: Path, monkeypatch):
+    """An incident dispatched right before stop() must be persisted to report."""
+    _patch_preflight(monkeypatch)
+    monkeypatch.setattr("sat.api.wait_for_processes",
+                        lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)])
+
+    cfg = _cfg(tmp_path)
+    t = StabilityTest(cfg, adb=_fake_adb(), discover_fn=lambda adb, pkg: [Process(pid=1234, name=pkg)])
+    t.start()
+    t._pool._dispatch(StabilityEvent(
+        event_type=EVENT_JAVA_CRASH,
+        process="com.example.app",
+        pid=1234,
+        triggered_at="2026-05-21 10:00:00.000",
+        summary="late boom",
+        raw_lines=[
+            "05-21 10:00:00.000  1234  1234 E AndroidRuntime: FATAL EXCEPTION: main",
+        ],
+    ))
+    t.stop()
+
+    report = json.loads((cfg.output_dir / "report.json").read_text())
+    assert len(report["incidents"]) == 1
+    assert report["incidents"][0]["summary"] == "late boom"
+    assert report["event_pipeline"]["detected_count"] == 1
+    assert report["event_pipeline"]["persisted_count"] == 1
+    assert report["event_pipeline"]["failed_count"] == 0
+    assert report["event_pipeline"]["timed_out_count"] == 0
 
 
 def test_setup_failure_writes_minimal_report_and_raises(tmp_path: Path, monkeypatch):
@@ -89,7 +122,10 @@ def test_duration_sec_reflects_monotonic_not_wall_clock(tmp_path: Path, monkeypa
     configured run budget, never the inflated wall-clock delta.
     """
     _patch_preflight(monkeypatch)
-    discover = lambda adb, pkg: [Process(pid=1234, name=pkg)]
+
+    def discover(adb, pkg):
+        return [Process(pid=1234, name=pkg)]
+
     monkeypatch.setattr("sat.api.wait_for_processes",
                         lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)])
 
@@ -108,11 +144,14 @@ def test_duration_sec_reflects_monotonic_not_wall_clock(tmp_path: Path, monkeypa
 
 def test_exception_in_with_block_marks_exit(tmp_path: Path, monkeypatch):
     _patch_preflight(monkeypatch)
-    discover = lambda adb, pkg: [Process(pid=1234, name=pkg)]
+
+    def discover(adb, pkg):
+        return [Process(pid=1234, name=pkg)]
+
     monkeypatch.setattr("sat.api.wait_for_processes",
                         lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)])
     with pytest.raises(RuntimeError):
-        with StabilityTest(_cfg(tmp_path), adb=_fake_adb(), discover_fn=discover) as t:
+        with StabilityTest(_cfg(tmp_path), adb=_fake_adb(), discover_fn=discover):
             raise RuntimeError("user code blew up")
     report = json.loads((tmp_path / "out" / "report.json").read_text())
     assert report["run"]["exit_reason"] == "exception"

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from sat.detection import (
     EVENT_ANR,
     EVENT_JAVA_CRASH,

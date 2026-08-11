@@ -112,16 +112,17 @@ with PerfTest(cfg) as t:
 **stability_auto_test**
 
 ```python
-from sat import StabilityConfig, StabilityTest
+from sat.api import StabilityConfig
 
 cfg = StabilityConfig(
     package="com.example.app",
-    duration_sec=1800,
     output_dir="./reports/run1",
 )
-with StabilityTest(cfg) as t:
-    t.run()
-# t.result holds the full report.json data
+print(cfg.package, cfg.output_dir)
+# Embed in your test framework:
+# with StabilityTest(cfg) as t:
+#     t.bookmark("scenario_a_done")
+# t.result holds the full report.json data (run / processes / incidents / verdict)
 ```
 
 ### Option 3 — Standalone CLI
@@ -176,15 +177,26 @@ reports/run1/
 ```
 reports/run1/
 ├── report.json               ← authoritative result (AI / CI readable)
-├── report.html               ← Plotly event timeline + process stability table
+├── report.html               ← self-contained offline Plotly report
+├── status.json               ← live heartbeat (processes / counters / collectors)
+├── incident_journal.jsonl    ← event facts; `sat recover` rebuilds from this
 ├── events_*.csv              ← event stream, hourly rotation
 ├── lifecycle_*.csv           ← process lifecycle, hourly rotation
 ├── logcat_*.log              ← raw logcat, hourly rotation
 └── incidents/
     ├── java_crash_<ts>_<proc>_pid<n>.json  ← exception class + frames + metadata
+    ├── ..._context.txt                     ← PRE/EVENT/POST context slice
     ├── native_crash_<ts>_<proc>_pid<n>.tombstone  (when accessible)
     ├── anr_<ts>_<proc>_pid<n>.trace               (when accessible)
     └── ...
+```
+
+Diagnostics & recovery:
+
+```bash
+cd stability_auto_test/scripts
+python -m sat doctor --package com.example.app --json | python -m json.tool
+python -m sat recover --output ./reports/run1
 ```
 
 Full docs: [`perf_auto_test/README.md`](perf_auto_test/README.md) · [`stability_auto_test/README.md`](stability_auto_test/README.md)
