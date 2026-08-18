@@ -20,6 +20,7 @@ from .conftest import (
     Adb,
     ensure_app_running,
     reset_fault_lab,
+    tap_on_screen,
     trigger_fault,
 )
 
@@ -186,10 +187,7 @@ def test_input_dispatch_anr(adb, fault_lab, sat_run):
     # ONE tap on the frozen window produces exactly one input-dispatch ANR
     # (the `input` command itself may block while the app is frozen).
     time.sleep(2.0)
-    try:
-        adb.run("shell", "input", "tap", "540", "1200", timeout=4.0)
-    except subprocess.TimeoutExpired:
-        pass
+    tap_on_screen(adb)
     run.wait_exit(timeout=180.0)
     report = run.report()
     anrs = [i for i in _incidents(report) if i["type"] == "anr"]
@@ -214,10 +212,7 @@ def test_main_deadlock_anr(adb, fault_lab, sat_run):
     # A deadlocked main thread surfaces as an input-dispatch ANR once the
     # user (test) taps the frozen window (single tap = single ANR).
     time.sleep(2.0)
-    try:
-        adb.run("shell", "input", "tap", "540", "1200", timeout=4.0)
-    except subprocess.TimeoutExpired:
-        pass
+    tap_on_screen(adb)
     run.wait_exit(timeout=180.0)
     report = run.report()
     anrs = [i for i in _incidents(report) if i["type"] == "anr"]
@@ -538,10 +533,7 @@ def test_main_busy_anr(adb, fault_lab, sat_run):
     # `input` command itself can time out on a busy device.
     time.sleep(2.0)
     for _ in range(4):
-        try:
-            adb.run("shell", "input", "tap", "540", "1200", timeout=4.0)
-        except subprocess.TimeoutExpired:
-            pass
+        tap_on_screen(adb)
         time.sleep(1.0)
     run.wait_exit(timeout=180.0)
     report = run.report()
@@ -936,8 +928,20 @@ def test_guest_reboot_recovered(adb, fault_lab, sat_run):
     run.wait_exit(timeout=300.0)
     report = run.report()
     events = report.get("device_events") or []
-    reboots = [e for e in events if e.get("event_type") == "reboot"]
-    assert reboots, f"reboot not detected: {events}"
+
+    # The device-health monitor records a reboot as a boot_id change: either
+    # an explicit `reboot` event (device stayed reachable) or an `offline` ->
+    # `recovered` pair whose `recovered` detail carries `boot_id <old> -> <new>`.
+    def _is_reboot_evidence(e: dict) -> bool:
+        if e.get("event_type") == "reboot":
+            return True
+        detail = e.get("detail") or ""
+        if e.get("event_type") == "recovered" and "boot_id" in detail:
+            ids = detail.replace("boot_id ", "").split("->")
+            return len(ids) == 2 and ids[0].strip() != ids[1].strip()
+        return False
+
+    assert any(_is_reboot_evidence(e) for e in events), f"reboot not detected: {events}"
     # A rebooted run can never claim full coverage/stable.
     assert report["coverage_ratio"] < 1.0, report["coverage_ratio"]
     assert report["verdict"] != "stable"

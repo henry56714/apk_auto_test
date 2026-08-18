@@ -24,6 +24,9 @@ perf_auto_test/reports
 stability_auto_test/scripts/reports
 stability_auto_test/reports
 
+# sat 自监控采样（工具进程自身的 RSS/线程/FD，运行期写入输出目录）
+self_resource.jsonl
+
 # ── Android 测试 APK 构建产物 ─────────────────────────────
 test_apps/**/.gradle/
 test_apps/**/.kotlin/

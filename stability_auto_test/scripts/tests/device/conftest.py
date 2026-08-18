@@ -83,10 +83,15 @@ def fault_lab(adb: Adb, request) -> None:
     # impossible. pm clear + force-stop are the spec §7.1.2 fallbacks.
     adb.run("shell", "am", "force-stop", FAULT_PKG, timeout=30.0)
     adb.run("shell", "pm", "clear", FAULT_PKG, timeout=60.0)
+    # Keep the display on for the whole session: after ~2 min idle the
+    # emulator sleeps the screen, and a tap on a sleeping screen never
+    # reaches the app window (ANR tests would silently miss the fault).
+    adb.run("shell", "svc", "power", "stayon", "true", timeout=30.0)
     ensure_app_running(adb)
     reset_fault_lab(adb)
     yield
     reset_fault_lab(adb)
+    adb.run("shell", "svc", "power", "stayon", "false", timeout=30.0)
     adb.run("shell", "am", "force-stop", FAULT_PKG)
 
 
@@ -119,7 +124,11 @@ def ensure_app_running(adb: Adb) -> None:
         adb.run("logcat", "-c", timeout=15.0)  # fresh marker evidence
         try:
             adb.run(
-                "shell", "am", "start", "-W", "-n",
+                "shell",
+                "am",
+                "start",
+                "-W",
+                "-n",
                 f"{FAULT_PKG}/.MainActivity",
                 timeout=20.0,
             )
@@ -146,6 +155,21 @@ def ensure_app_running(adb: Adb) -> None:
 
 def adb_clear_logcat(adb: Adb) -> None:
     adb.run("logcat", "-c", timeout=15.0)
+
+
+def tap_on_screen(adb: Adb, x: int = 540, y: int = 1200) -> None:
+    """Wake + unlock, then tap the frozen window.
+
+    The `input tap` itself may block while the app is frozen (the tap lands on
+    a window whose main thread cannot consume it) — that is expected and fine.
+    """
+    adb.run("shell", "input", "keyevent", "KEYCODE_WAKEUP", timeout=10.0)
+    adb.run("shell", "wm", "dismiss-keyguard", timeout=10.0)
+    time.sleep(0.5)
+    try:
+        adb.run("shell", "input", "tap", str(x), str(y), timeout=4.0)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def trigger_fault(
