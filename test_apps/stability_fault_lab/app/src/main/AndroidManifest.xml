@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Stability Fault Lab — TEST ONLY. Deliberately crashes, ANRs and leaks.
+  No network, account, contact or location permissions.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Shell (uid 2000) holds DUMP; ordinary third-party apps do not. -->
+    <uses-permission android:name="android.permission.DUMP" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:name=".FaultApp"
+        android:allowBackup="false"
+        android:label="Stability Fault Lab"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Fault trigger entry: explicit component, shell-only permission. -->
+        <receiver
+            android:name=".FaultReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+
+        <!-- Remote process for multi-process fault tests. Exported but
+             protected by the same shell-only DUMP permission as the
+             receiver: the host can start FGS directly, third-party apps
+             cannot. -->
+        <service
+            android:name=".RemoteService"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:process=":remote" />
+    </application>
+</manifest>

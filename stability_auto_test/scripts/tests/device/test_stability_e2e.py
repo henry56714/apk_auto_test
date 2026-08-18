@@ -707,9 +707,11 @@ def test_two_emulators_parallel_zero_crosstalk(adb, fault_lab, sat_run):
         pytest.skip("two emulators required (only one online)")
     other = next(s for s in serials if s != adb.serial)
     # Prepare the second device.
-    apk = "../test_apps/stability_fault_lab/app/build/outputs/apk/debug/app-debug.apk"
+    apk = Path(__file__).parents[4] / (
+        "test_apps/stability_fault_lab/app/build/outputs/apk/debug/app-debug.apk"
+    )
     install = subprocess.run(
-        ["adb", "-s", other, "install", "-r", "-t", apk],
+        ["adb", "-s", other, "install", "-r", "-t", str(apk)],
         capture_output=True,
         text=True,
         timeout=180.0,

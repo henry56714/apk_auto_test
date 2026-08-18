@@ -53,13 +53,13 @@ python -m sat --package com.android.settings --duration 30s \
 open /tmp/sat-smoke/report.html
 
 # 4.（可选）确定性故障复现：安装 Fault Lab 后触发
-adb install -r -t ../test_apps/stability_fault_lab/app/build/outputs/apk/debug/app-debug.apk
+adb install -r -t ../../test_apps/stability_fault_lab/app/build/outputs/apk/debug/app-debug.apk
 adb shell am broadcast -n com.example.stabilityfaultlab/.FaultReceiver \
   -a com.example.stabilityfaultlab.TRIGGER --es fault JAVA_MAIN_CRASH \
   --es fault_id java-main-001
 ```
 
-Fault Lab（`test_apps/stability_fault_lab/`）是仓库自带的故障注入 APK，
+Fault Lab（仓库根目录 `test_apps/stability_fault_lab/`）是仓库自带的故障注入 APK，
 包含 Java/Native Crash、ANR、OOM、FD/线程泄漏、self-exit、敏感日志等
 30+ 种确定性故障；每个 action 输出 `SAT_FAULT_BEGIN id=<id> type=<type>`
 marker，供 fusion / action window / replay 关联。详见其 README。

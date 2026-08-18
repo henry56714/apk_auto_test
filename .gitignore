@@ -24,6 +24,12 @@ perf_auto_test/reports
 stability_auto_test/scripts/reports
 stability_auto_test/reports
 
+# ── Android 测试 APK 构建产物 ─────────────────────────────
+test_apps/**/.gradle/
+test_apps/**/.kotlin/
+test_apps/**/.cxx/
+test_apps/**/build/
+
 # 临时文件
 tmp/
 *.log

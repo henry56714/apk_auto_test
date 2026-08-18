@@ -15,6 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 详细架构与数据流见各工具的 `README.md`。
 
+仓库根目录 `test_apps/` 是**两工具共用的自测 APK**（Stability Fault Lab 故障注入应用：Java/Native Crash、ANR、OOM、FD/线程泄漏、self-exit 等 30+ 种确定性故障，adb 广播触发）。构建方式见 `test_apps/stability_fault_lab/README.md`；sat 的 L2 设备套件通过 `--fault-apk` 使用它。
+
 ## 开发与测试
 
 每套工具独立操作，命令在各自的 `scripts/` 目录下执行：
