@@ -1,5 +1,40 @@
 # Migration notes
 
+## From schema 1.14 → 1.15 (2026-08-13 spec S1/S2 hardening)
+
+### report.json
+
+- 新增顶层字段：`verdict_reason[]`、`verdict_confidence`（high/partial/none）、
+  `expected_exit_count`、`phase_timings`（prepare/observe/teardown）、
+  `capabilities[]`、`disk_audit[]`。
+- **verdict 语义修正（IMP-01）**：已确认 failure（java/native crash、ANR）在
+  覆盖不足时不再被降级为 `inconclusive` —— `verdict=unstable` 与
+  `collection_health=degraded` 可同时成立，`verdict_confidence=partial`。
+- 未知原因的非预期 process exit 会令干净 run 变成 `inconclusive`（4.3）。
+- JUnit：`verdict=unstable` → `<failure>`（含 coverage 信息）；
+  纯观测不完整 → `<error>`。
+- 事件模型：新增 Observation/Fusion 层（`observations.py`/`fusion.py`），
+  incident 证据新增 `supporting_sources`、`subtype`、`crashing_thread`、
+  `startup_crash`、`cause_chain`、`exit_taxonomy`。
+- ExitInfo 时间戳按设备时区换算为真实 UTC（`timestamp_epoch`）；API 35
+  `APP CRASH(EXCEPTION)` 等 reason 格式被正确识别。
+- Native 帧保留完整 `#xx pc <addr> module`（symbolizer 依赖 PC）。
+
+### 行为变更
+
+- `stop()` 返回后输出目录冻结：证据先写 staging，任务在 deadline 内成功才
+  原子发布（dump worker 迟到写入只会留在 staging）。
+- `export` 默认脱敏（allowlist + canary 扫描）；原始导出必须
+  `--raw --acknowledge-sensitive`；二进制证据不进脱敏包。
+- workload 与观测共用同一 duration 预算（不再累加）；workload 失败默认
+  非 0 退出（`--ignore-workload-failure` 显式豁免）；仅 manifest action
+  窗口内的 fault 才算 `workload_expected`。
+- logcat 连接收到首条可解析行才算 collecting；静默连接按 stale 重连。
+- 配额拆分为 `min_free_bytes` / `max_run_bytes` / `max_file_bytes`
+  （`max_disk_bytes` 仍作为 `min_free_bytes` 的兼容别名）。
+- `events_*.csv` 新增 `source`、`fault_id` 列（v4 tag）。
+- 配置校验统一（CLI/YAML/Profile/Library 同一 `_validate()`）。
+
 ## From schema 1.x (pre-2026-08-10 baseline)
 
 ### report.json

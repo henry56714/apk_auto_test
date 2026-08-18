@@ -28,18 +28,27 @@ class WorkloadRunner:
         self.cleanup_timeout_sec = float(cleanup_timeout_sec)
 
     def run(self) -> WorkloadResult:
+        started_iso = utc_now_iso()
         self.workload.prepare()
         self.bookmarks.append("workload_start", self.workload.manifest())
         result = self.workload.run()
         self.bookmarks.append("workload_end", {"status": result.status})
         self._cleanup()
         manifest = dict(self.workload.manifest())
-        manifest.update({
-            "started_at": result.started_at or utc_now_iso(),
-            "ended_at": result.ended_at or utc_now_iso(),
-            "status": result.status,
-            "exit_code": result.exit_code,
-        })
+        # Stamp every declared action with its real start time: the pool uses
+        # action windows to decide *which* exits were expected (IMP-08).
+        actions = list(manifest.get("actions") or [])
+        for action in actions:
+            action.setdefault("started_at", result.started_at or started_iso)
+        manifest["actions"] = actions
+        manifest.update(
+            {
+                "started_at": result.started_at or started_iso,
+                "ended_at": result.ended_at or utc_now_iso(),
+                "status": result.status,
+                "exit_code": result.exit_code,
+            }
+        )
         atomic_write_json(self.manifest_path, manifest)
         return result
 

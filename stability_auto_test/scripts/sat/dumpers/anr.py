@@ -31,12 +31,16 @@ def run(
     incidents_dir: Path,
     *,
     pull_anr_trace: bool = True,
+    ctx=None,
+    staging_dir: Optional[Path] = None,
+    fetcher=None,
 ) -> Dict:
-    incidents_dir.mkdir(parents=True, exist_ok=True)
+    target = staging_dir or incidents_dir
+    target.mkdir(parents=True, exist_ok=True)
     base = base_name_for(event)
-    slice_path = incidents_dir / f"{base}.txt"
-    trace_path = incidents_dir / f"{base}.trace"
-    json_path = incidents_dir / f"{base}.json"
+    slice_path = target / f"{base}.txt"
+    trace_path = target / f"{base}.trace"
+    json_path = target / f"{base}.json"
 
     slice_name = write_raw_slice(slice_path, event)
     trace_name: Optional[str] = None
@@ -48,7 +52,11 @@ def run(
     }
 
     if pull_anr_trace:
-        match = match_trace(adb, event, "/data/anr/")
+        if ctx is not None:
+            ctx.check()
+        match = match_trace(
+            adb, event, "/data/anr/", timeout=(ctx.timeout_for(30.0) if ctx is not None else 30.0)
+        )
         match_info["evidence_match_confidence"] = match.confidence
         match_info["evidence_match_reasons"] = list(match.reasons)
         if not match.bound:
@@ -56,14 +64,34 @@ def run(
         else:
             remote = match.candidate.path
             try:
-                adb.pull(remote, str(trace_path), check=True, timeout=30.0)
+                if ctx is not None:
+                    ctx.check()
+                adb.pull(
+                    remote,
+                    str(trace_path),
+                    check=True,
+                    timeout=ctx.timeout_for(30.0) if ctx is not None else 30.0,
+                )
                 if trace_path.exists() and trace_path.stat().st_size > 0:
-                    trace_name = trace_path.name
                     ok, reason = verify_local_trace(trace_path, event)
                     match_info["trace_verified"] = ok
                     if not ok:
+                        # Verification failed: the pulled file must NOT be
+                        # treated as evidence. Quarantine it and drop the
+                        # reference (IMP-05 / T-L0-013).
                         match_info["trace_verify_reason"] = reason
                         match_info["evidence_match_confidence"] = "low"
+                        quarantine = target / f"{trace_path.name}.unverified"
+                        try:
+                            trace_path.rename(quarantine)
+                        except OSError:
+                            try:
+                                trace_path.unlink()
+                            except OSError:
+                                pass
+                        fallback = "verification_failed"
+                    else:
+                        trace_name = trace_path.name
                 else:
                     fallback = "ANR trace pull produced empty file"
             except AdbError as e:
@@ -71,7 +99,7 @@ def run(
     else:
         fallback = "ANR trace pull disabled by config"
 
-    dropbox_name = fetch_and_write_dropbox(adb, event, incidents_dir, base)
+    dropbox_name = fetch_and_write_dropbox(adb, event, target, base, ctx=ctx, fetcher=fetcher)
     incident = build_incident_dict(
         event,
         logcat_slice_file=slice_name,
@@ -81,6 +109,7 @@ def run(
         extra_evidence=match_info,
     )
     write_incident(json_path, incident)
-    log.info("anr incident written: %s (trace=%s, dropbox=%s)",
-             json_path.name, trace_name, dropbox_name)
+    log.info(
+        "anr incident written: %s (trace=%s, dropbox=%s)", json_path.name, trace_name, dropbox_name
+    )
     return incident

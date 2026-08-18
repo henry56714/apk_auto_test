@@ -9,15 +9,17 @@ from sat.health import compute_collector_health
 
 
 def test_extract_device_ts_threadtime_default():
-    assert _extract_device_ts(
-        "05-21 10:00:00.123  1234  5678 E AndroidRuntime: x"
-    ) == "05-21 10:00:00.123"
+    assert (
+        _extract_device_ts("05-21 10:00:00.123  1234  5678 E AndroidRuntime: x")
+        == "05-21 10:00:00.123"
+    )
 
 
 def test_extract_device_ts_with_year():
-    assert _extract_device_ts(
-        "2026-05-21 10:00:00.123  1234  5678 E X: x"
-    ) == "2026-05-21 10:00:00.123"
+    assert (
+        _extract_device_ts("2026-05-21 10:00:00.123  1234  5678 E X: x")
+        == "2026-05-21 10:00:00.123"
+    )
 
 
 def test_extract_device_ts_unparseable():
@@ -47,8 +49,7 @@ def _make_stream_with_lines(lines):
         eof.kill = MagicMock()
         return eof
 
-    stream = LogcatStream(serial=None, buffers=["main"], popen_fn=popen,
-                          reconnect_backoff_sec=0.0)
+    stream = LogcatStream(serial=None, buffers=["main"], popen_fn=popen, reconnect_backoff_sec=0.0)
     return stream, popen_calls
 
 
@@ -65,9 +66,11 @@ def test_logcat_stream_yields_lines_and_advances_last_ts():
 
 
 def test_logcat_stream_resume_arg_when_reconnecting():
-    stream, _ = _make_stream_with_lines([
-        "05-21 10:00:00.001  1 1 I tag: x",
-    ])
+    stream, _ = _make_stream_with_lines(
+        [
+            "05-21 10:00:00.001  1 1 I tag: x",
+        ]
+    )
     stream._last_device_ts = "05-21 10:00:00.001"
     cmd = stream._build_cmd()
     # `-T '<ts>'` must be present after the buffer args.
@@ -78,8 +81,7 @@ def test_logcat_stream_resume_arg_when_reconnecting():
 def test_logcat_stream_stats_track_up_intervals_and_gaps():
     fake_proc1 = MagicMock()
     fake_proc1.stdout = io.StringIO(
-        "05-21 10:00:00.100  1 1 I tag: one\n"
-        "05-21 10:00:00.200  1 1 I tag: two\n"
+        "05-21 10:00:00.100  1 1 I tag: one\n05-21 10:00:00.200  1 1 I tag: two\n"
     )
     fake_proc1.stderr = io.StringIO("")
     fake_proc1.terminate = MagicMock()
@@ -120,7 +122,9 @@ def test_logcat_stream_stats_track_up_intervals_and_gaps():
     stats = stream.stats
 
     assert stats["reconnects"] >= 1
-    assert len(stats["up_intervals"]) >= 2
+    # IMP-06: only connections that produced at least one line count as
+    # collecting — the second (empty) connection must be a gap, not "up".
+    assert len(stats["up_intervals"]) == 1
     assert len(stats["gap_intervals"]) >= 1
     assert stats["up_intervals"][0][1] <= stats["gap_intervals"][0][0]
     assert stats["started_at"] is not None

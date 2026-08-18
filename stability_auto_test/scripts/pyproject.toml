@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stability-auto-test"
-version = "0.1.0"
+version = "0.2.0"
 description = "Trusted Android stability black-box diagnostics: logcat/dropbox-driven Java crash, native crash, ANR and process-death capture with journal-based reports, CI gates and offline HTML"
 readme = "README.md"
 requires-python = ">=3.9"

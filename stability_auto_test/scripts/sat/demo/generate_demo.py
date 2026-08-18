@@ -323,7 +323,7 @@ def build_report() -> dict:
     log_file = "logcat_2024-06-20_14.log"
 
     return {
-        "schema_version": "1.14",
+        "schema_version": "1.15",
         "run": {
             "started_at": ts(0),
             "ended_at": ts(DURATION),

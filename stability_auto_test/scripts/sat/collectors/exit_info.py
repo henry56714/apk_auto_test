@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from ..adb import Adb, AdbError
 from ..detection import _name_matches_package
@@ -67,6 +67,11 @@ class ExitInfoRecord:
     source: str = EXIT_INFO_SOURCE
     confidence: str = "high"
     expected: bool = False
+    # Raw device string for reasons this tool does not recognise yet
+    # (preserved so future Android versions never get silently mislabelled).
+    raw_reason: str = ""
+    # Real UTC epoch seconds, computed by the query with the device tz.
+    timestamp_epoch: Optional[float] = None
 
     @property
     def is_stability_failure(self) -> bool:
@@ -74,6 +79,9 @@ class ExitInfoRecord:
 
     @property
     def category(self) -> str:
+        if self.raw_reason and self.exit_reason not in ("normal_recycle",):
+            # Unrecognised reason: keep the raw value visible, never guess.
+            return "unknown"
         if self.exit_reason in (REASON_CRASHED, REASON_SIGNALED):
             return "crash"
         if self.exit_reason == REASON_ANR:
@@ -97,13 +105,24 @@ class ExitInfoRecord:
             "source": self.source,
             "confidence": self.confidence,
             "expected": self.expected,
+            "raw_reason": self.raw_reason,
+            "timestamp_epoch": self.timestamp_epoch,
             "category": self.category,
             "is_stability_failure": self.is_stability_failure,
         }
 
 
-def _normalize_reason(raw: str) -> str:
+def _normalize_reason(raw: str) -> Tuple[str, bool]:
+    """Normalize an ExitInfo reason string. Returns `(reason, is_known)`.
+
+    Unknown/future Android reasons are preserved in `raw_reason` and reported
+    with `category=unknown` instead of being silently mapped (T-L0-010).
+    """
     r = (raw or "").strip().upper()
+    # API 30+ dumpsys prints e.g. `APP CRASH(EXCEPTION)` / `APP CRASH(NATIVE)`;
+    # both are REASON_CRASH with the kind embedded in the string.
+    if r.startswith("APP CRASH"):
+        return REASON_CRASHED, True
     mapping = {
         "CRASHED": REASON_CRASHED,
         "CRASH": REASON_CRASHED,
@@ -135,15 +154,23 @@ def _normalize_reason(raw: str) -> str:
         "USER REQUESTED": REASON_USER_REQUESTED,
         "USER STOPPED": REASON_USER_STOPPED,
     }
-    return mapping.get(r, REASON_OTHER)
+    if r in mapping:
+        return mapping[r], True
+    if not raw or not raw.strip():
+        return REASON_OTHER, False
+    return REASON_OTHER, False
 
 
 def _normalize_cached_recycle(reason: str, proc_state: str) -> str:
     """Map cache/background kills to normal_recycle instead of a failure."""
     if reason == REASON_OTHER and proc_state and "cached" in proc_state.lower():
         return "normal_recycle"
-    if reason in (REASON_PACKAGE_UPDATED, REASON_PERMISSION_CHANGE,
-                  REASON_PACKAGE_STATE_CHANGE, "system_recycle"):
+    if reason in (
+        REASON_PACKAGE_UPDATED,
+        REASON_PERMISSION_CHANGE,
+        REASON_PACKAGE_STATE_CHANGE,
+        "system_recycle",
+    ):
         return "normal_recycle"
     return reason
 
@@ -162,12 +189,12 @@ _RE_DESCRIPTION = re.compile(r"^Description:\s*(.*)$")
 _RE_APP_INFO = re.compile(r"^ApplicationExitInfo #\d+:")
 _RE_TS_PID = re.compile(r"timestamp=(\S+ \S+)\s+pid=(\d+)")
 _RE_PROCESS2 = re.compile(
-    r"process=(\S+)\s+reason=(\d+)\s+\(([^)]+)\)"
-    r"\s+subreason=(\d+)\s+\(([^)]+)\)\s+status=(\S+)"
+    # Greedy paren groups: API 30+ reason strings can nest parens, e.g.
+    # `(APP CRASH(EXCEPTION))` — `[^)]+` would truncate at the inner `)`.
+    r"process=(\S+)\s+reason=(\d+)\s+\((.+)\)"
+    r"\s+subreason=(\d+)\s+\((.+)\)\s+status=(\S+)"
 )
-_RE_MEM2 = re.compile(
-    r"importance=(\d+)\s+pss=([\d.]+)(MB)?\s+rss=([\d.]+)(MB)?"
-)
+_RE_MEM2 = re.compile(r"importance=(\d+)\s+pss=([\d.]+)(MB)?\s+rss=([\d.]+)(MB)?")
 _RE_DESC2 = re.compile(r"description=(\S+)")
 
 
@@ -259,13 +286,17 @@ def parse_exit_info_text(text: str) -> List[ExitInfoRecord]:
 
 
 def _record_from(cur: Dict) -> ExitInfoRecord:
-    reason = _normalize_reason(cur.get("reason", ""))
+    raw_reason = (cur.get("reason") or "").strip()
+    reason, known = _normalize_reason(raw_reason)
     proc_state = f"{cur.get('status', '')} {cur.get('importance', '')}"
     reason = _normalize_cached_recycle(reason, proc_state)
     process = cur.get("process", "")
     expected = reason in (
-        REASON_EXIT_SELF, REASON_USER_REQUESTED, REASON_USER_STOPPED,
-        REASON_PACKAGE_UPDATED, "normal_recycle",
+        REASON_EXIT_SELF,
+        REASON_USER_REQUESTED,
+        REASON_USER_STOPPED,
+        REASON_PACKAGE_UPDATED,
+        "normal_recycle",
     )
     return ExitInfoRecord(
         pid=int(cur.get("pid", 0)),
@@ -279,16 +310,34 @@ def _record_from(cur: Dict) -> ExitInfoRecord:
         pss_kb=cur.get("pss_kb"),
         rss_kb=cur.get("rss_kb"),
         expected=expected,
+        raw_reason=raw_reason if not known else "",
     )
 
 
-def _parse_ts_epoch(ts: str) -> Optional[float]:
+def _parse_ts_epoch(ts: str, tz_offset_minutes: Optional[int] = None) -> Optional[float]:
+    """Parse an ExitInfo timestamp into real UTC epoch seconds.
+
+    dumpsys timestamps are naive device-local strings; when
+    `tz_offset_minutes` is given they are converted to real UTC (IMP-05).
+    """
     try:
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.timestamp()
+        epoch = dt.timestamp()
+        if tz_offset_minutes is not None:
+            epoch -= tz_offset_minutes * 60
+        return epoch
     except ValueError:
+        return None
+
+
+def _device_tz_offset_minutes(adb: Adb) -> Optional[int]:
+    from ..evidence.trace_matcher import query_device_tz_offset_minutes
+
+    try:
+        return query_device_tz_offset_minutes(adb)
+    except Exception:
         return None
 
 
@@ -306,23 +355,37 @@ def query_exit_info(
     *,
     since_epoch: Optional[float] = None,
     max_records: int = 500,
+    available: Optional[bool] = None,
 ) -> List[ExitInfoRecord]:
-    """Query exit-info and filter to this package + post-watermark records."""
-    if not exit_info_available(adb):
+    """Query exit-info and filter to this package + post-watermark records.
+
+    `available` lets callers reuse a capability probe taken earlier in the run
+    instead of probing again on every query (IMP-03).
+    """
+    capable = exit_info_available(adb) if available is None else available
+    if not capable:
         log.info("exit-info unavailable; falling back to logcat/dropbox/watcher")
         return []
     try:
-        r = adb.shell("dumpsys activity exit-info", check=False, timeout=8.0)
+        r = adb.shell("dumpsys activity exit-info", check=False, timeout=30.0)
     except AdbError:
-        return []
+        # Under emulator load a single dumpsys can exceed the deadline;
+        # retry once before giving up (records must never vanish silently).
+        try:
+            r = adb.shell("dumpsys activity exit-info", check=False, timeout=30.0)
+        except AdbError:
+            log.warning("exit-info dumpsys failed twice; no records")
+            return []
     if r.returncode != 0:
         return []
     base_pkg = package.split(":")[0]
+    tz_offset = _device_tz_offset_minutes(adb)
     out = []
     for rec in parse_exit_info_text(r.stdout):
         if not _name_matches_package(rec.process, base_pkg):
             continue
-        ts_epoch = _parse_ts_epoch(rec.timestamp)
+        ts_epoch = _parse_ts_epoch(rec.timestamp, tz_offset)
+        rec.timestamp_epoch = ts_epoch
         if since_epoch is not None and (ts_epoch is None or ts_epoch <= since_epoch):
             continue
         out.append(rec)
@@ -331,12 +394,22 @@ def query_exit_info(
     return out
 
 
-def latest_watermark(adb: Adb, package: str) -> Optional[float]:
-    """Return the newest exit-info timestamp (run-start watermark)."""
-    records = query_exit_info(adb, package)
+def latest_watermark(
+    adb: Adb,
+    package: str,
+    *,
+    available: Optional[bool] = None,
+) -> Optional[float]:
+    """Return the newest exit-info timestamp (run-start watermark).
+
+    Uses the query-computed real-UTC `timestamp_epoch` (device-tz corrected).
+    """
+    records = query_exit_info(adb, package, available=available)
     newest: Optional[float] = None
     for rec in records:
-        ts = _parse_ts_epoch(rec.timestamp)
+        ts = rec.timestamp_epoch
+        if ts is None:
+            ts = _parse_ts_epoch(rec.timestamp)
         if ts is not None and (newest is None or ts > newest):
             newest = ts
     return newest

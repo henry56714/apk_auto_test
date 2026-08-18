@@ -31,7 +31,7 @@ def aggregate_reports(device_reports: List[Dict]) -> Dict:
         run = report.get("run", {}) or {}
         device = run.get("device", {}) or {}
         serial = device.get("serial", "?")
-        has_report = bool(report and report.get("verdict"))
+        has_report = bool(report and report.get("_report_path"))
         status = "ok" if has_report else "missing"
         if has_report:
             ok_devices += 1

@@ -35,7 +35,7 @@ from ..policy import evaluate_policy, policy_from_dict
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "1.14"
+SCHEMA_VERSION = "1.15"
 REPORT_FILENAME = "report.json"
 
 
@@ -404,6 +404,10 @@ def build(
     recovered: bool = False,
     recovered_at: Optional[str] = None,
     duration_sec: Optional[float] = None,
+    phase_timings: Optional[Dict] = None,
+    quota_audit: Optional[List[Dict]] = None,
+    capabilities: Optional[List[Dict]] = None,
+    source_mode: str = "live",
 ) -> Dict:
     """Build the canonical report dict.
 
@@ -434,6 +438,15 @@ def build(
 
     life_df = _read_csvs(life_files)
     incidents, incident_warnings = _build_incidents(incidents_dir, journal_records)
+    # DropBox evidence counts as a supporting source for cross-source
+    # traceability (spec 4.2: every source that saw the failure is listed).
+    for inc in incidents:
+        evidence = inc.setdefault("evidence", {})
+        sources = list(evidence.get("supporting_sources") or [])
+        if evidence.get("dropbox_file") and "dropbox" not in sources:
+            sources.append("dropbox")
+        if sources:
+            evidence["supporting_sources"] = sources
     exit_records = correlate_exit_info(incidents, list(exit_info or []))
     correlate_resource_risk(incidents, list(resource_risk or []))
     recovery_warnings = recovery_warnings + incident_warnings
@@ -451,7 +464,8 @@ def build(
     if recovery_warnings and "journal recovery warnings" not in health_reasons:
         health_reasons.append(f"journal recovery warnings: {len(recovery_warnings)}")
     coverage_ratio = round(float(collector_health.get("coverage_ratio", 1.0)), 4)
-    verdict = compute_verdict(collection_health, incidents=incidents)
+    verdict_result = compute_verdict(collection_health, incidents=incidents)
+    verdict = verdict_result.verdict
 
     process_names = set()
     if not life_df.empty and "process_name" in life_df.columns:
@@ -481,6 +495,7 @@ def build(
 
     return {
         "schema_version": SCHEMA_VERSION,
+        "source_mode": source_mode,
         "run": {
             "started_at": _iso(started_at),
             "ended_at": _iso(ended_at),
@@ -494,6 +509,7 @@ def build(
             "git_sha": (app_metadata or {}).get("git_sha", ""),
             "recovered": bool(recovered),
             "recovered_at": recovered_at,
+            "phase_timings": phase_timings or {},
             "device": device,
             "package": package,
             "config_effective": config_effective,
@@ -509,7 +525,12 @@ def build(
         "collection_health": collection_health,
         "coverage_ratio": coverage_ratio,
         "verdict": verdict,
+        "verdict_reason": list(verdict_result.reasons),
+        "verdict_confidence": verdict_result.confidence,
+        "expected_exit_count": verdict_result.expected_count,
         "collectors": collectors or {},
+        "capabilities": list(capabilities or []),
+        "disk_audit": list(quota_audit or []),
         "policy": policy_result,
         "recovery_warnings": recovery_warnings,
         "lifecycle_events": _build_lifecycle_events(life_df),

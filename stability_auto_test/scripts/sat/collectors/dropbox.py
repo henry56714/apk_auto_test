@@ -41,8 +41,32 @@ from ..detection import (
     _name_matches_package,
     _parse_device_ts_sec,
 )
+from ..fusion import parse_device_ts_epoch
 
 log = logging.getLogger(__name__)
+
+
+def _device_ts_delta_sec(event_ts: Optional[str], entry_ts: Optional[str]) -> Optional[float]:
+    """Absolute device-time distance between an event and a dropbox entry.
+
+    Uses full date+time when the event timestamp carries a year (IMP-05:
+    yesterday's same-second entry can never match today's crash);
+    seconds-of-day otherwise.
+    """
+    if not event_ts or not entry_ts:
+        return None
+    if re.search(r"\d{4}-\d{2}-\d{2}", event_ts):
+        event_full = parse_device_ts_epoch(event_ts)
+        entry_full = parse_device_ts_epoch(entry_ts)
+        if event_full is not None and entry_full is not None:
+            return abs(event_full - entry_full)
+    event_sod = _parse_device_ts_sec(event_ts)
+    entry_sod = _parse_device_ts_sec(entry_ts)
+    if event_sod is None or entry_sod is None:
+        return None
+    delta = abs(event_sod - entry_sod)
+    return min(delta, 86400.0 - delta)
+
 
 ENTRY_HEAD_RE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+"
@@ -133,10 +157,15 @@ class DropboxFetcher:
         process: str,
         device_ts: Optional[str] = None,
         window_sec: float = 60.0,
+        timeout: float = 30.0,
     ) -> Optional[List[str]]:
-        """Return body lines of the best-matching dropbox entry, or None."""
+        """Return body lines of the best-matching dropbox entry, or None.
+
+        `timeout` bounds the dumpsys call; dumpers pass the task's remaining
+        deadline budget here so a hung device cannot exceed the shared limit.
+        """
         try:
-            r = self.adb.shell("dumpsys dropbox --print", check=False, timeout=30.0)
+            r = self.adb.shell("dumpsys dropbox --print", check=False, timeout=timeout)
         except AdbError as e:
             log.warning("dropbox fetch failed: %s", e)
             return None
@@ -146,7 +175,6 @@ class DropboxFetcher:
         entries = parse_dropbox_dump(r.stdout)
         relevant_tags = {tag for tag, et in DROPBOX_TAG_TO_TYPE.items() if et == event_type}
         base_pkg = process.split(":")[0]
-        event_dev = _parse_device_ts_sec(device_ts)
 
         best: Optional[_Entry] = None
         best_delta = float("inf")
@@ -157,19 +185,61 @@ class DropboxFetcher:
             p = _process_from_body(entry.body)
             if not p or not _name_matches_package(p, base_pkg):
                 continue
-            if event_dev is not None:
-                entry_dev = _parse_device_ts_sec(entry.device_ts)
-                if entry_dev is not None:
-                    delta = abs(event_dev - entry_dev)
-                    delta = min(delta, 86400.0 - delta)
-                    if delta > window_sec:
-                        continue
-                    if delta < best_delta:
-                        best_delta = delta
-                        best = entry
+            delta = _device_ts_delta_sec(device_ts, entry.device_ts)
+            if delta is not None:
+                # Full date+time when available: yesterday's same-second
+                # entry can never match today's crash (IMP-05 / T-L0-014).
+                if delta > window_sec:
                     continue
-            # No device_ts to compare: take the first matching entry.
+                if delta < best_delta:
+                    best_delta = delta
+                    best = entry
+                continue
             if best is None:
+                # No comparable timestamps: prefer the most recent matching
+                # entry, not the first (often the oldest).
+                best = entry
+            elif entry.device_ts > best.device_ts:
                 best = entry
 
         return list(best.body) if best is not None else None
+
+
+class CachingDropboxFetcher:
+    """Run-level cache around `DropboxFetcher` (spec S2 / IMP-20).
+
+    A crash storm can request hundreds of DropBox dumps for the same tag;
+    each is a full `dumpsys dropbox --print` over the whole history. This
+    wrapper reuses the last result per (event_type, base package) within a
+    TTL, so dumpsys calls stay bounded instead of growing linearly with
+    incident count. Full evidence is still fetched once per TTL window for
+    each distinct fault.
+    """
+
+    def __init__(self, adb: Adb, *, ttl_sec: float = 30.0) -> None:
+        self._fetcher = DropboxFetcher(adb)
+        self._ttl = float(ttl_sec)
+        self._cache: dict = {}
+        self.dumpsys_calls = 0
+
+    def fetch(
+        self,
+        event_type: str,
+        process: str,
+        device_ts: Optional[str] = None,
+        window_sec: float = 60.0,
+        timeout: float = 30.0,
+    ) -> Optional[List[str]]:
+        import time as _time
+
+        key = (event_type, process.split(":")[0])
+        now = _time.monotonic()
+        cached = self._cache.get(key)
+        if cached is not None and now - cached[0] < self._ttl:
+            return list(cached[1]) if cached[1] is not None else None
+        self.dumpsys_calls += 1
+        body = self._fetcher.fetch(
+            event_type, process, device_ts, window_sec=window_sec, timeout=timeout,
+        )
+        self._cache[key] = (now, list(body) if body else None)
+        return body

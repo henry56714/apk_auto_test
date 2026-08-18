@@ -64,14 +64,32 @@ class DeviceHealthMonitor:
 
     def _default_query(self) -> DeviceSnapshot:
         try:
+            # IMP-13: `ro.boot.boot_id` does not exist on many devices; the
+            # kernel boot_id under /proc/sys/kernel/random/boot_id is the
+            # reliable source, with uptime as a monotonic fallback.
             boot_id = self.adb.shell(
-                "getprop ro.boot.boot_id", check=False, timeout=3.0,
+                "cat /proc/sys/kernel/random/boot_id",
+                check=False,
+                timeout=3.0,
             ).stdout.strip()
-            boot_completed = self.adb.shell(
-                "getprop sys.boot_completed", check=False, timeout=3.0,
-            ).stdout.strip() == "1"
+            if not boot_id:
+                boot_id = self.adb.shell(
+                    "getprop ro.boot.boot_id",
+                    check=False,
+                    timeout=3.0,
+                ).stdout.strip()
+            boot_completed = (
+                self.adb.shell(
+                    "getprop sys.boot_completed",
+                    check=False,
+                    timeout=3.0,
+                ).stdout.strip()
+                == "1"
+            )
             uptime = self.adb.shell(
-                "cat /proc/uptime", check=False, timeout=3.0,
+                "cat /proc/uptime",
+                check=False,
+                timeout=3.0,
             ).stdout.split()[0]
             state = "device"
             try:
@@ -81,13 +99,17 @@ class DeviceHealthMonitor:
         except (AdbError, IndexError, ValueError):
             return DeviceSnapshot(state="offline")
         return DeviceSnapshot(
-            boot_id=boot_id, boot_completed=boot_completed,
-            uptime_sec=uptime_sec, state=state,
+            boot_id=boot_id,
+            boot_completed=boot_completed,
+            uptime_sec=uptime_sec,
+            state=state,
         )
 
     def start(self) -> None:
         self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="device-health",
+            target=self._loop,
+            daemon=True,
+            name="device-health",
         )
         self._thread.start()
 
@@ -109,18 +131,55 @@ class DeviceHealthMonitor:
             now = self._now()
             snap = self._query()
             last = self._last
+            if snap.state != "device" and last is not None and last.boot_id:
+                # Preserve the last-known boot id across offline gaps so a
+                # boot_id change during a gap can still be detected.
+                snap.boot_id = last.boot_id
             self._last = snap
 
             if last is not None:
                 if last.state in ("device", "") and snap.state != "device":
                     self._begin_gap(snap.state, now)
                 elif last.state != "device" and snap.state == "device":
-                    self._end_gap(now)
-                elif last.state == "device" and snap.state == "device" \
-                        and last.boot_id and snap.boot_id \
-                        and last.boot_id != snap.boot_id:
+                    # Recovery — and, when the boot id changed across the gap,
+                    # a real reboot (device epoch must advance, T-L1-027).
+                    self._end_gap(
+                        now,
+                        detail=(
+                            f"boot_id {last.boot_id} -> {snap.boot_id}"
+                            if last.boot_id and snap.boot_id and last.boot_id != snap.boot_id
+                            else "recovered"
+                        ),
+                    )
+                    if last.boot_id and snap.boot_id and last.boot_id != snap.boot_id:
+                        self.pid_epoch += 1
+                elif (
+                    last.state == "device"
+                    and snap.state == "device"
+                    and last.boot_id
+                    and snap.boot_id
+                    and last.boot_id != snap.boot_id
+                ):
                     self._begin_gap("reboot", now)
                     self._end_gap(now, detail=f"boot_id {last.boot_id} -> {snap.boot_id}")
+                    self.pid_epoch += 1
+                elif (
+                    last.state == "device"
+                    and snap.state == "device"
+                    and (not last.boot_id or not snap.boot_id)
+                    and last.uptime_sec > snap.uptime_sec + 60
+                ):
+                    # boot_id unavailable on this device: a large uptime
+                    # regression is still a reboot (IMP-13), recorded with
+                    # the evidence it was inferred from.
+                    self._begin_gap("reboot", now)
+                    self._end_gap(
+                        now,
+                        detail=(
+                            f"uptime regression {last.uptime_sec:.0f}s -> "
+                            f"{snap.uptime_sec:.0f}s (boot_id unavailable)"
+                        ),
+                    )
                     self.pid_epoch += 1
 
             if self._stop.wait(self.interval_sec):
@@ -130,7 +189,9 @@ class DeviceHealthMonitor:
         if self._active_gap is not None:
             return
         self._active_gap = DeviceEvent(
-            event_type=kind, started_at=now, detail="started",
+            event_type=kind,
+            started_at=now,
+            detail="started",
         )
         self._record(self._active_gap)
         if self._on_gap_started is not None:
@@ -141,9 +202,13 @@ class DeviceHealthMonitor:
             return
         self._active_gap.ended_at = now
         self._active_gap.detail = detail
-        self._record(DeviceEvent(
-            event_type="recovered", started_at=now, detail=detail,
-        ))
+        self._record(
+            DeviceEvent(
+                event_type="recovered",
+                started_at=now,
+                detail=detail,
+            )
+        )
         self._active_gap = None
         if self._on_recovered is not None:
             self._on_recovered()

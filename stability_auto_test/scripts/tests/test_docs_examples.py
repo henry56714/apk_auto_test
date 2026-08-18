@@ -90,7 +90,7 @@ def test_release_artifacts_exist():
 def test_generated_html_has_no_cdn_dependency(tmp_path: Path):
     from sat.reporter import html as html_renderer
     result = {
-        "schema_version": "1.14",
+        "schema_version": "1.15",
         "run": {
             "package": "com.example.app",
             "started_at": "2026-05-21 10:00:00.000",

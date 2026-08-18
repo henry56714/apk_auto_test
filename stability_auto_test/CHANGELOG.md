@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.2.0 (2026-08-13)
+
+### 可信结论与确定性设备测试（spec 第一阶段）
+
+- **verdict 三层语义修正（IMP-01）**：已确认 failure 在覆盖不足时仍为
+  `unstable`（`verdict_confidence=partial`）；`verdict_reason[]` /
+  `expected_exit_count` 进入报告；JUnit failure/error 与 verdict 对齐。
+- **可取消可冻结的证据任务（IMP-02）**：staging 目录 + 共享 deadline +
+  原子发布；`stop()` 返回后输出目录冻结（T-L1-001..004）。
+- **Observation + Fusion 层（IMP-03）**：`sat/observations.py`、
+  `sat/fusion.py`；ExitInfo 补回 logcat 漏检的 Crash/ANR/LMK；三源去重
+  `supporting_sources`；run-start 水位 ≥ 设备 epoch，能力探测只做一次。
+- **时间/证据匹配修复（IMP-04/05/06/09）**：native 帧保留 PC；logcat
+  stderr drain + 首行 collecting + stale heartbeat；设备时区换算（ExitInfo /
+  tombstone ls）；验证失败的 trace 隔离（`verification_failed`）；
+  DropBox 全日期匹配；pre/observe/teardown 阶段计时。
+- **安全导出与真实配额（IMP-07/12）**：默认脱敏 allowlist + canary 扫描
+  （命中即删包失败）；`--raw --acknowledge-sensitive`；`min_free_bytes` /
+  `max_run_bytes` / `max_file_bytes` + 按大小滚动 + 周期 retention 审计。
+- **workload/矩阵/统一 stop（IMP-08/13/16/17）**：统一 duration 预算；
+  workload 异步 + stdout drain + 失败默认非 0；action window 才标 expected；
+  矩阵全配置序列化 + 每设备聚合；`boot_id` 用内核源 + uptime 回退；
+  统一 `_validate()` 配置校验。
+- **Stability Fault Lab APK（S1-07）**：`test_apps/stability_fault_lab/`
+  Kotlin+CMake，`SAT_FAULT_BEGIN` marker 协议，Java/Native Crash、ANR、
+  OOM、FD/线程泄漏、self-exit、sensitive log 等 25+ 故障；`--device` L2
+  套件（T-L2-001..037 覆盖主链路）。
+
+### 检测与诊断深度（spec 第二阶段）
+
+- S2-01: crashing thread / cause chain / startup crash / `crash_loop` 分组；
+  OOM 细分（heap/bitmap/native/GC overhead）。
+- S2-02/04: build ID + ABI 符号匹配；exit taxonomy expected/failure/unknown。
+- S2-03: ANR 类型（input/broadcast/service/...）+ 根因（lock holder、
+  binder_wait、busy_loop、io_wait、late_or_non_actionable）。
+- S2-05: 资源采样 value+capability+error（拒绝=unavailable 非 0）、
+  多风险同报、进程 epoch baseline、RSS。
+- S2-07: FGS / Binder / SQLite / ENOSPC 崩溃细分。
+
+### 离线与体验（spec 第三/四阶段部分）
+
+- S3-01: `sat analyze-bugreport <zip>` 离线复盘（同 parser/fusion/报告
+  schema，`source_mode=offline_bugreport`）。
+- IMP-20: DropBox 风暴缓存（dumpsys 调用有界）。
+- IMP-23: 报告 `capabilities[]` 能力清单。
+- 报告 schema 升级 v1.14 → v1.15；events CSV v4；配置校验统一。
+
 ## v0.1.0 (2026-08-10)
 
 ### 第一阶段：检测到就不静默丢失

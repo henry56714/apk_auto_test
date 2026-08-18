@@ -2300,7 +2300,7 @@ def render(result: Dict) -> str:
     # Build the embedded JSON blocks. We split incidents/lifecycle from `report`
     # so each block is small and the JS reads them independently.
     report_block = {
-        "schema_version": result.get("schema_version", "1.14"),
+        "schema_version": result.get("schema_version", "1.15"),
         "run": {
             "package": pkg,
             "started_at": run.get("started_at"),

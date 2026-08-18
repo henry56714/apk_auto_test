@@ -519,8 +519,25 @@ def test_logcat_stats_preserved_after_stop(tmp_path: Path):
 
 
 def test_workload_restart_exit_marked_expected(tmp_path: Path):
+    # IMP-08: only an action window declaring the fault id marks the exit
+    # expected — a bare manifest must NOT blanket-mark all deaths.
     (tmp_path / "workload_manifest.json").write_text(
-        '{"type": "monkey", "status": "ok"}',
+        json.dumps(
+            {
+                "type": "self_exit",
+                "status": "ok",
+                "started_at": "2026-05-21 10:00:00.000Z",
+                "actions": [
+                    {
+                        "id": "self-exit-1",
+                        "fault_id": "fault-self-001",
+                        "expected_exit": True,
+                        "window_sec": 60,
+                        "started_at": "2026-05-21 10:00:00.000Z",
+                    }
+                ],
+            }
+        ),
         encoding="utf-8",
     )
     ev_w, life_w = _writers(tmp_path)
@@ -534,21 +551,41 @@ def test_workload_restart_exit_marked_expected(tmp_path: Path):
         discover_fn=lambda adb, pkg: [],
     )
     pool.start()
+
+    # In-window exit with the declared fault id → expected.
     pool._dispatch(
         StabilityEvent(
             event_type=EVENT_PROCESS_DEATH,
             process=PACKAGE,
             pid=1234,
-            triggered_at="2026-05-21 10:00:00.000",
-            summary="process_death: cached",
-            reason="cached",
+            triggered_at="2026-05-21 10:00:10.000",
+            summary="process_death: self exit",
+            reason="exit_self",
+            fault_id="fault-self-001",
+        )
+    )
+    # Out-of-window exit without a fault id → NOT expected.
+    pool._dispatch(
+        StabilityEvent(
+            event_type=EVENT_PROCESS_DEATH,
+            process=PACKAGE,
+            pid=1235,
+            triggered_at="2026-05-21 11:00:00.000",
+            summary="process_death: unknown",
+            reason="unknown",
         )
     )
     pool.stop(join_timeout=1.0, dump_shutdown_timeout_sec=3.0)
     ev_w.close()
     life_w.close()
-    incident = json.loads(next((tmp_path / "incidents").glob("*.json")).read_text())
-    assert incident["evidence"]["workload_expected"] is True
+    incidents_by_pid = {
+        inc["pid"]: inc
+        for inc in [
+            json.loads(p.read_text()) for p in sorted((tmp_path / "incidents").glob("*.json"))
+        ]
+    }
+    assert incidents_by_pid[1234]["evidence"]["workload_expected"] is True
+    assert "workload_expected" not in incidents_by_pid[1235]["evidence"]
 
 
 def test_timed_out_task_has_exactly_one_terminal_state(tmp_path: Path):

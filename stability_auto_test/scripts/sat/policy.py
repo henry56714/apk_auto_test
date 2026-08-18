@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+from .health import is_expected_incident
+
 
 @dataclass
 class PolicyConfig:
@@ -32,24 +34,8 @@ def policy_from_dict(data: Dict) -> PolicyConfig:
         max_restarts=int(data.get("max_restarts", 0)),
         min_uptime_ratio=float(data.get("min_uptime_ratio", 0.99)),
         min_coverage_ratio=float(data.get("min_coverage_ratio", 0.99)),
-        fail_on_new_regression_only=bool(
-            data.get("fail_on_new_regression_only", False)
-        ),
+        fail_on_new_regression_only=bool(data.get("fail_on_new_regression_only", False)),
     )
-
-
-def _normal_recycle(incident: Dict) -> bool:
-    evidence = incident.get("evidence") or {}
-    reason = str(evidence.get("reason") or "").lower()
-    expected_reasons = ("cached", "force-stop", "force_stop", "user requested",
-                        "user stopped", "stop", "exit_self")
-    if any(r in reason for r in expected_reasons) or evidence.get("expected") is True:
-        return True
-    if evidence.get("workload_expected") is True:
-        return True
-    if evidence.get("exit_info_reason") == "normal_recycle":
-        return True
-    return False
 
 
 def evaluate_policy(
@@ -60,61 +46,74 @@ def evaluate_policy(
 ) -> Dict:
     rules: List[Dict] = []
 
+    # Expected exits (force-stop, cached recycle, workload action windows, ...)
+    # are audited, never policy failures.
     fatal_counts = {
-        t: sum(1 for i in incidents if i.get("type") == t)
+        t: sum(1 for i in incidents if i.get("type") == t and not is_expected_incident(i))
         for t in policy.fail_on
     }
-    rules.append({
-        "rule": "fail_on",
-        "actual": fatal_counts,
-        "threshold": policy.fail_on,
-        "pass": all(v == 0 for v in fatal_counts.values()),
-    })
+    rules.append(
+        {
+            "rule": "fail_on",
+            "actual": fatal_counts,
+            "threshold": policy.fail_on,
+            "pass": all(v == 0 for v in fatal_counts.values()),
+        }
+    )
 
-    anr_count = sum(1 for i in incidents if i.get("type") == "anr")
-    rules.append({
-        "rule": "max_anr",
-        "actual": anr_count,
-        "threshold": policy.max_anr,
-        "pass": anr_count <= policy.max_anr,
-    })
+    anr_count = sum(1 for i in incidents if i.get("type") == "anr" and not is_expected_incident(i))
+    rules.append(
+        {
+            "rule": "max_anr",
+            "actual": anr_count,
+            "threshold": policy.max_anr,
+            "pass": anr_count <= policy.max_anr,
+        }
+    )
 
     death_count = sum(
-        1 for i in incidents
-        if i.get("type") == "process_death" and not _normal_recycle(i)
+        1 for i in incidents if i.get("type") == "process_death" and not is_expected_incident(i)
     )
-    rules.append({
-        "rule": "max_process_death",
-        "actual": death_count,
-        "threshold": policy.max_process_death,
-        "pass": death_count <= policy.max_process_death,
-    })
+    rules.append(
+        {
+            "rule": "max_process_death",
+            "actual": death_count,
+            "threshold": policy.max_process_death,
+            "pass": death_count <= policy.max_process_death,
+        }
+    )
 
     restart_count = sum(p.get("restart_count", 0) for p in processes)
-    rules.append({
-        "rule": "max_restarts",
-        "actual": restart_count,
-        "threshold": policy.max_restarts,
-        "pass": restart_count <= policy.max_restarts,
-    })
+    rules.append(
+        {
+            "rule": "max_restarts",
+            "actual": restart_count,
+            "threshold": policy.max_restarts,
+            "pass": restart_count <= policy.max_restarts,
+        }
+    )
 
     uptime = min(
         (p.get("uptime_ratio", 1.0) for p in processes),
         default=1.0,
     )
-    rules.append({
-        "rule": "min_uptime_ratio",
-        "actual": round(uptime, 4),
-        "threshold": policy.min_uptime_ratio,
-        "pass": uptime >= policy.min_uptime_ratio,
-    })
+    rules.append(
+        {
+            "rule": "min_uptime_ratio",
+            "actual": round(uptime, 4),
+            "threshold": policy.min_uptime_ratio,
+            "pass": uptime >= policy.min_uptime_ratio,
+        }
+    )
 
-    rules.append({
-        "rule": "min_coverage_ratio",
-        "actual": round(coverage_ratio, 4),
-        "threshold": policy.min_coverage_ratio,
-        "pass": coverage_ratio >= policy.min_coverage_ratio,
-    })
+    rules.append(
+        {
+            "rule": "min_coverage_ratio",
+            "actual": round(coverage_ratio, 4),
+            "threshold": policy.min_coverage_ratio,
+            "pass": coverage_ratio >= policy.min_coverage_ratio,
+        }
+    )
 
     return {
         "rules": rules,

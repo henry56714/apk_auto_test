@@ -43,7 +43,9 @@ def correlate_exit_info(
     exit records are returned for the report's `exit_info` section.
     """
     for rec in exit_records:
-        rec_ts = _ts_epoch(rec.get("timestamp"))
+        rec_ts = rec.get("timestamp_epoch")
+        if rec_ts is None:
+            rec_ts = _ts_epoch(rec.get("timestamp"))
         matched: Optional[Dict] = None
         base_proc = (rec.get("process") or "").split(":")[0]
         for inc in incidents:

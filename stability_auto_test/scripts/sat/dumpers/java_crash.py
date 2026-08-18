@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from ..adb import Adb
 from ..detection import StabilityEvent
@@ -23,14 +23,19 @@ def run(
     adb: Adb,
     event: StabilityEvent,
     incidents_dir: Path,
+    *,
+    ctx=None,
+    staging_dir: Optional[Path] = None,
+    fetcher=None,
 ) -> Dict:
-    incidents_dir.mkdir(parents=True, exist_ok=True)
+    target = staging_dir or incidents_dir
+    target.mkdir(parents=True, exist_ok=True)
     base = base_name_for(event)
-    slice_path = incidents_dir / f"{base}.txt"
-    json_path = incidents_dir / f"{base}.json"
+    slice_path = target / f"{base}.txt"
+    json_path = target / f"{base}.json"
 
     slice_name = write_raw_slice(slice_path, event)
-    dropbox_name = fetch_and_write_dropbox(adb, event, incidents_dir, base)
+    dropbox_name = fetch_and_write_dropbox(adb, event, target, base, ctx=ctx, fetcher=fetcher)
     incident = build_incident_dict(
         event,
         logcat_slice_file=slice_name,

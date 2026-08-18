@@ -138,9 +138,13 @@ def test_recover_without_journal_fails(tmp_path: Path):
 
 
 def test_abnormal_recovery_is_inconclusive_without_run_complete(tmp_path: Path):
-    """Recovered reports without a run-complete marker must be inconclusive."""
+    """Recovered reports without a run-complete marker: coverage is
+    inconclusive, but an already-observed fatal crash must still surface as
+    `unstable` (spec IMP-01) with partial confidence."""
     _write_journal(tmp_path)
     result = recover_report(tmp_path)
     assert result["collection_health"] == "inconclusive"
     assert result["coverage_ratio"] == 0.0
-    assert result["verdict"] == "inconclusive"
+    assert result["verdict"] == "unstable"
+    assert result["verdict_confidence"] == "partial"
+    assert any("confirmed failure" in r for r in result["verdict_reason"])

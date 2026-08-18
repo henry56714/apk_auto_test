@@ -8,7 +8,9 @@ import json
 import logging
 import re
 import sys
+import threading
 import time
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -34,9 +36,11 @@ from .recovery import recover_report
 from .redaction import Redactor, export_bundle, redact_output_dir
 from .replay import run_replay, write_replay_manifest
 from .runlock import RunLockError
+from .workloads.base import WorkloadResult
 from .workloads.external import ExternalWorkload
 from .workloads.launch import LaunchWorkload
 from .workloads.monkey import MonkeyWorkload
+from .workloads.runner import MANIFEST_FILENAME, WorkloadRunner
 
 log = logging.getLogger("stability_auto_test")
 
@@ -146,6 +150,8 @@ def _flatten_yaml(data: Dict[str, Any]) -> Dict[str, Any]:
         out["resource_risk_interval_sec"] = resource_risk["interval_sec"]
     if "fd_growth_threshold" in resource_risk:
         out["resource_fd_growth_threshold"] = resource_risk["fd_growth_threshold"]
+    if "rss_growth_threshold_kb" in resource_risk:
+        out["resource_rss_growth_threshold_kb"] = resource_risk["rss_growth_threshold_kb"]
     if "thread_growth_threshold" in resource_risk:
         out["resource_thread_growth_threshold"] = resource_risk["thread_growth_threshold"]
     detection = data.get("detection", {}) or {}
@@ -351,22 +357,40 @@ def _run_matrix_mode(args: argparse.Namespace, cfg: StabilityConfig) -> int:
         log.error("no devices selected for matrix mode")
         return EXIT_SETUP
 
-    from .matrix import launch_package_on
-
-    for device in devices:
-        try:
-            launch_package_on(device, cfg.package)
-        except Exception:
-            log.warning("could not launch %s on %s", cfg.package, device)
-
     output_root = cfg.output_dir
+    output_root.mkdir(parents=True, exist_ok=True)
+    # IMP-17: serialize the FULL effective config for every worker. Only the
+    # per-device fields (device/output) differ; detection, policy, redaction,
+    # quota and workload settings are identical across workers.
+    import yaml as _yaml
+
+    worker_cfg_path = output_root / "matrix_worker_config.yaml"
+    effective = cfg.config_effective()
+    effective.pop("device", None)
+    effective.pop("output_dir", None)
+    worker_cfg_path.write_text(
+        _yaml.safe_dump({"package": cfg.package, **effective}),
+        encoding="utf-8",
+    )
+
+    # Launch is driven by the workload choice, never forced (monitor-only
+    # semantics stay intact).
+    if args.workload == "launch":
+        from .matrix import launch_package_on
+
+        for device in devices:
+            try:
+                launch_package_on(device, cfg.package)
+            except Exception:
+                log.warning("could not launch %s on %s", cfg.package, device)
+
     results = run_matrix(
         package=cfg.package,
         devices=devices,
         output_root=output_root,
         duration_sec=int(duration_sec),
-        max_parallel=2,
-        extra_args=["--min-coverage", str(cfg.min_coverage_ratio)],
+        max_parallel=max(1, int(getattr(args, "matrix_parallel", 2) or 2)),
+        extra_args=["--config", str(worker_cfg_path)],
     )
     reports = []
     for res in results:
@@ -375,6 +399,24 @@ def _run_matrix_mode(args: argparse.Namespace, cfg: StabilityConfig) -> int:
             report = json.loads(report_path.read_text(encoding="utf-8"))
             report["_report_path"] = str(report_path)
             reports.append(report)
+        else:
+            # A worker that never produced a report must still appear in the
+            # aggregate — a broken device can never silently disappear.
+            reports.append(
+                {
+                    "_report_path": None,
+                    "run": {
+                        "device": {"serial": res.device, "android_version": "?", "sdk_int": 0},
+                        "exit_code": res.returncode,
+                        "exit_reason": res.error or "matrix_worker_failed",
+                    },
+                    "verdict": "inconclusive",
+                    "incidents": [],
+                    "issue_groups": [],
+                    "device_events": [],
+                    "coverage_ratio": 0.0,
+                }
+            )
     aggregate = aggregate_reports(reports)
     write_aggregate(aggregate, output_root)
     failed = [r for r in results if r.returncode != 0]
@@ -659,6 +701,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Run a workload inside the monitor window (default: monitor-only)",
     )
+    p.add_argument(
+        "--ignore-workload-failure",
+        action="store_true",
+        help=(
+            "Keep exit code 0 when the workload fails (workload failures "
+            "default to a non-zero exit so they are never silently swallowed)"
+        ),
+    )
+    p.add_argument(
+        "--matrix-parallel",
+        type=int,
+        default=2,
+        help="Max parallel devices in matrix mode (default: 2)",
+    )
     p.add_argument("--monkey-seed", type=int, default=0, help="Monkey seed (deterministic runs)")
     p.add_argument("--monkey-events", type=int, default=1000, help="Monkey event count")
     p.add_argument("--monkey-throttle", type=int, default=50, help="Monkey throttle milliseconds")
@@ -710,6 +766,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Replay a previous run from its replay.yaml manifest",
     )
     replay.add_argument("--manifest", required=True, help="Path to replay.yaml")
+    bugreport = sub.add_parser(
+        "analyze-bugreport",
+        help="Parse a bugreport zip offline (no device needed)",
+    )
+    bugreport.add_argument("zip", help="Path to the bugreport zip")
+    bugreport.add_argument(
+        "--package",
+        default=None,
+        help="Target package (inferred from the bugreport when omitted)",
+    )
+    bugreport.add_argument(
+        "--output",
+        default=None,
+        help="Output directory (default: ./reports/bugreport_<ts>)",
+    )
     replay.add_argument(
         "--output", default=None, help="New output directory (default: sibling replay dir)"
     )
@@ -723,7 +794,26 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--output", required=True, help="Run output directory")
     export.add_argument("--target", required=True, help="Destination zip path")
     export.add_argument(
-        "--redacted", action="store_true", help="Redact sensitive data before bundling"
+        "--raw",
+        action="store_true",
+        help=("Export the raw (unredacted) evidence. Requires --acknowledge-sensitive."),
+    )
+    export.add_argument(
+        "--acknowledge-sensitive",
+        action="store_true",
+        help=(
+            "Explicitly acknowledge that --raw includes unredacted sensitive "
+            "evidence (emails, tokens, paths)."
+        ),
+    )
+    export.add_argument(
+        "--redact-regex",
+        action="append",
+        default=None,
+        help=(
+            "Additional redaction/scan regex (repeatable). Hits are counted "
+            "across all bundled files."
+        ),
     )
     index = sub.add_parser(
         "index",
@@ -805,6 +895,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return EXIT_GATE_FAILED
         return EXIT_OK
 
+    if args.command == "analyze-bugreport":
+        from .offline import analyze_bugreport
+
+        zip_path = Path(args.zip)
+        out = (
+            Path(args.output)
+            if args.output
+            else Path(f"./reports/bugreport_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        )
+        try:
+            report = analyze_bugreport(zip_path, out, package=args.package)
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            log.error("bugreport analysis failed: %s", e)
+            return EXIT_SETUP
+        log.info(
+            "bugreport analyzed: %d incident(s), verdict=%s",
+            len(report.get("incidents") or []),
+            report.get("verdict"),
+        )
+        return EXIT_OK
+
     if args.command == "replay":
         manifest = Path(args.manifest)
         out = (
@@ -826,11 +937,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return EXIT_OK
 
     if args.command == "export":
+        raw_requested = bool(getattr(args, "raw", False))
+        if raw_requested and not getattr(args, "acknowledge_sensitive", False):
+            log.error(
+                "--raw requires --acknowledge-sensitive: the bundle would "
+                "contain unredacted evidence"
+            )
+            return EXIT_SETUP  # 2 — no zip is created (T-L0-024)
         try:
             target = export_bundle(
                 Path(args.output),
                 Path(args.target),
-                redacted=args.redacted,
+                redacted=not raw_requested,
+                raw=raw_requested,
+                acknowledge_sensitive=bool(getattr(args, "acknowledge_sensitive", False)),
+                extra_regexes=getattr(args, "redact_regex", None),
             )
         except (OSError, ValueError) as e:
             log.error("export failed: %s", e)
@@ -889,6 +1010,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     stab: Optional[StabilityTest] = None
     interrupted = False
+    workload_result: Optional[WorkloadResult] = None
+    workload_runner: Optional[WorkloadRunner] = None
+    workload_thread: Optional[threading.Thread] = None
+    # Unified observation budget (IMP-08): the duration covers preparation +
+    # workload + observation together — a workload never extends the run.
+    deadline = time.time() + effective_duration
     try:
         stab = StabilityTest(cfg)
         if args.workload == "launch" and args.device:
@@ -901,18 +1028,48 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         stab.start()
         workload = _build_workload(args, stab)
         if workload is not None:
-            stab.run_workload(workload)
+            workload_runner = WorkloadRunner(
+                workload,
+                bookmarks=stab._bookmarks,
+                manifest_path=cfg.output_dir / MANIFEST_FILENAME,
+            )
+            results_holder: Dict[str, WorkloadResult] = {}
+
+            def _workload_thread_fn() -> None:
+                try:
+                    results_holder["result"] = workload_runner.run()
+                except Exception as e:  # noqa: BLE001 - recorded in result
+                    log.exception("workload crashed")
+                    results_holder["result"] = WorkloadResult(
+                        status="failed",
+                        exit_code=1,
+                        message=str(e),
+                    )
+
+            workload_thread = threading.Thread(
+                target=_workload_thread_fn,
+                daemon=True,
+                name="workload",
+            )
+            workload_thread.start()
+
         # Use wall-clock time for the deadline so that OS sleep (which
         # suspends time.monotonic() on macOS) does not silently extend the
         # run past the user-specified duration.
-        deadline = time.time() + effective_duration
         try:
-            while time.time() < deadline:
-                time.sleep(0.5)
+            stop_reason = stab.wait(deadline)
+            if stop_reason == "fail_fast":
+                log.warning("device fail-fast triggered; stopping")
+                stab.set_exit(EXIT_INCONCLUSIVE, "device_fail_fast")
         except KeyboardInterrupt:
             interrupted = True
             log.info("interrupted; stopping pool")
             stab.set_exit(EXIT_SIGINT, "interrupted")
+        if workload_thread is not None and workload_thread.is_alive():
+            workload_runner.stop()
+            workload_thread.join(timeout=30.0)
+        if workload_runner is not None:
+            workload_result = results_holder.get("result") if workload_thread is not None else None
     except DeviceSetupError as e:
         log.error("preflight failed: %s", e)
         if stab is not None and getattr(stab, "_stopped", False):
@@ -924,6 +1081,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except KeyboardInterrupt:
         interrupted = True
     finally:
+        if (
+            workload_runner is not None
+            and workload_thread is not None
+            and workload_thread.is_alive()
+        ):
+            workload_runner.stop()
+            workload_thread.join(timeout=10.0)
         if stab is not None and not getattr(stab, "_stopped", False):
             try:
                 if interrupted:
@@ -948,7 +1112,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if interrupted:
         return EXIT_SIGINT
+    # Workload failures always surface unless explicitly ignored (IMP-08) —
+    # collect-only mode included.
+    if (
+        workload_result is not None
+        and workload_result.status == "failed"
+        and not getattr(args, "ignore_workload_failure", False)
+    ):
+        stab.set_exit(EXIT_GATE_FAILED, "workload_failed")
+        if stab._result is not None:
+            stab.rewrite_reports()
     result = stab._result
+    if stab._exit_reason == "workload_failed" and not getattr(
+        args,
+        "ignore_workload_failure",
+        False,
+    ):
+        return EXIT_GATE_FAILED
     if args.junit:
         try:
             from .reporter.junit import write_junit

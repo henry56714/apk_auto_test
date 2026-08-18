@@ -47,14 +47,15 @@ def test_context_manager_writes_report(tmp_path: Path, monkeypatch):
     def discover(adb, pkg):
         return [Process(pid=1234, name=pkg)]
 
-    monkeypatch.setattr("sat.api.wait_for_processes",
-                        lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)])
+    monkeypatch.setattr(
+        "sat.api.wait_for_processes", lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)]
+    )
 
     with StabilityTest(_cfg(tmp_path), adb=_fake_adb(), discover_fn=discover) as t:
         t.bookmark("scenario_a_done")
 
     report = json.loads((tmp_path / "out" / "report.json").read_text())
-    assert report["schema_version"] == "1.14"
+    assert report["schema_version"] == "1.15"
     assert report["run"]["package"] == "com.example.app"
     assert report["run"]["exit_code"] == 0
     assert any(b["label"] == "scenario_a_done" for b in report["bookmarks"])
@@ -63,22 +64,27 @@ def test_context_manager_writes_report(tmp_path: Path, monkeypatch):
 def test_late_incident_is_drained_into_report(tmp_path: Path, monkeypatch):
     """An incident dispatched right before stop() must be persisted to report."""
     _patch_preflight(monkeypatch)
-    monkeypatch.setattr("sat.api.wait_for_processes",
-                        lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)])
+    monkeypatch.setattr(
+        "sat.api.wait_for_processes", lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)]
+    )
 
     cfg = _cfg(tmp_path)
-    t = StabilityTest(cfg, adb=_fake_adb(), discover_fn=lambda adb, pkg: [Process(pid=1234, name=pkg)])
+    t = StabilityTest(
+        cfg, adb=_fake_adb(), discover_fn=lambda adb, pkg: [Process(pid=1234, name=pkg)]
+    )
     t.start()
-    t._pool._dispatch(StabilityEvent(
-        event_type=EVENT_JAVA_CRASH,
-        process="com.example.app",
-        pid=1234,
-        triggered_at="2026-05-21 10:00:00.000",
-        summary="late boom",
-        raw_lines=[
-            "05-21 10:00:00.000  1234  1234 E AndroidRuntime: FATAL EXCEPTION: main",
-        ],
-    ))
+    t._pool._dispatch(
+        StabilityEvent(
+            event_type=EVENT_JAVA_CRASH,
+            process="com.example.app",
+            pid=1234,
+            triggered_at="2026-05-21 10:00:00.000",
+            summary="late boom",
+            raw_lines=[
+                "05-21 10:00:00.000  1234  1234 E AndroidRuntime: FATAL EXCEPTION: main",
+            ],
+        )
+    )
     t.stop()
 
     report = json.loads((cfg.output_dir / "report.json").read_text())
@@ -93,6 +99,7 @@ def test_late_incident_is_drained_into_report(tmp_path: Path, monkeypatch):
 def test_setup_failure_writes_minimal_report_and_raises(tmp_path: Path, monkeypatch):
     def fail(adb, *, serial, package):
         raise DeviceSetupError("no device")
+
     monkeypatch.setattr("sat.api.preflight", fail)
 
     cfg = _cfg(tmp_path)
@@ -105,8 +112,7 @@ def test_setup_failure_writes_minimal_report_and_raises(tmp_path: Path, monkeypa
 
 def test_wait_timeout_writes_report_and_raises(tmp_path: Path, monkeypatch):
     _patch_preflight(monkeypatch)
-    monkeypatch.setattr("sat.api.wait_for_processes",
-                        lambda adb, pkg, *, timeout_sec: [])
+    monkeypatch.setattr("sat.api.wait_for_processes", lambda adb, pkg, *, timeout_sec: [])
     cfg = _cfg(tmp_path)
     with pytest.raises(TimeoutError):
         StabilityTest(cfg, adb=_fake_adb()).start()
@@ -126,14 +132,24 @@ def test_duration_sec_reflects_monotonic_not_wall_clock(tmp_path: Path, monkeypa
     def discover(adb, pkg):
         return [Process(pid=1234, name=pkg)]
 
-    monkeypatch.setattr("sat.api.wait_for_processes",
-                        lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)])
+    monkeypatch.setattr(
+        "sat.api.wait_for_processes", lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)]
+    )
 
-    # Fake monotonic: start at 100.0, advance by 3600s ("1h of active runtime")
-    # Wall clock (datetime.now) is untouched, so it will look like much less
-    # or more time than 1h — the report must trust monotonic.
-    values = iter([100.0, 3700.0])
-    monkeypatch.setattr("sat.api.time.monotonic", lambda: next(values))
+    # Fake monotonic: 100.0 through start()+pool.start(), then 3700.0 for the
+    # observation window ("1h of active runtime") — wall clock (datetime.now)
+    # is untouched, so the report must trust monotonic for duration_sec.
+    calls = iter([100.0, 100.0, 3700.0])
+    state = {"last": 100.0}
+
+    def fake_monotonic() -> float:
+        try:
+            state["last"] = next(calls)
+        except StopIteration:
+            pass
+        return state["last"]
+
+    monkeypatch.setattr("sat.api.time.monotonic", fake_monotonic)
 
     with StabilityTest(_cfg(tmp_path), adb=_fake_adb(), discover_fn=discover):
         pass
@@ -148,8 +164,9 @@ def test_exception_in_with_block_marks_exit(tmp_path: Path, monkeypatch):
     def discover(adb, pkg):
         return [Process(pid=1234, name=pkg)]
 
-    monkeypatch.setattr("sat.api.wait_for_processes",
-                        lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)])
+    monkeypatch.setattr(
+        "sat.api.wait_for_processes", lambda adb, pkg, *, timeout_sec: [Process(pid=1234, name=pkg)]
+    )
     with pytest.raises(RuntimeError):
         with StabilityTest(_cfg(tmp_path), adb=_fake_adb(), discover_fn=discover):
             raise RuntimeError("user code blew up")

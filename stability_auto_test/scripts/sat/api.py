@@ -14,6 +14,7 @@ that adds duration timing + exit-code translation on top.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -92,7 +93,10 @@ class StabilityConfig:
     resource_risk_interval_sec: float = 30.0
     resource_fd_growth_threshold: int = 200
     resource_thread_growth_threshold: int = 50
-    max_disk_bytes: Optional[int] = None
+    resource_rss_growth_threshold_kb: int = 300 * 1024
+    max_disk_bytes: Optional[int] = None  # deprecated alias for min_free_bytes
+    min_free_bytes: Optional[int] = None
+    max_run_bytes: Optional[int] = None
     max_log_file_bytes: int = 512 * 1024 * 1024
     log_retention_hours: int = 24
     max_queue_size: int = 50
@@ -153,14 +157,75 @@ class StabilityConfig:
 
     def __post_init__(self) -> None:
         self.output_dir = Path(self.output_dir)
+        self._validate()
+
+    def _validate(self) -> None:
+        """Full cross-field validation (IMP-16 / T-L0-021).
+
+        CLI, YAML, profiles and the library API all funnel through this one
+        method, so every entry point produces the same error for the same
+        invalid configuration.
+        """
+        errors: List[str] = []
         if not self.package:
-            raise ValueError("StabilityConfig.package is required")
-        if self.dedup_window_sec < 0:
-            raise ValueError("dedup_window_sec must be >= 0")
-        if self.max_incidents_per_type < 0:
-            raise ValueError("max_incidents_per_type must be >= 0")
+            errors.append("package is required")
+        if not 0.0 <= float(self.min_coverage_ratio) <= 1.0:
+            errors.append(
+                f"min_coverage_ratio must be within [0, 1], got {self.min_coverage_ratio}"
+            )
+        for name in (
+            "wait_timeout_sec",
+            "rescan_interval_sec",
+            "logcat_reconnect_backoff_sec",
+            "device_health_interval_sec",
+            "resource_risk_interval_sec",
+            "dedup_window_sec",
+            "pre_context_sec",
+            "post_context_sec",
+            "self_monitor_interval_sec",
+            "status_interval_sec",
+        ):
+            value = float(getattr(self, name))
+            if value < 0:
+                errors.append(f"{name} must be >= 0, got {value}")
         if self.dump_shutdown_timeout_sec <= 0:
-            raise ValueError("dump_shutdown_timeout_sec must be > 0")
+            errors.append(
+                f"dump_shutdown_timeout_sec must be > 0, got {self.dump_shutdown_timeout_sec}"
+            )
+        if self.max_incidents_per_type < 0:
+            errors.append(f"max_incidents_per_type must be >= 0, got {self.max_incidents_per_type}")
+        if self.max_queue_size <= 0:
+            errors.append(f"max_queue_size must be > 0, got {self.max_queue_size}")
+        if self.evidence_sample_every_n < 1:
+            errors.append(
+                f"evidence_sample_every_n must be >= 1, got {self.evidence_sample_every_n}"
+            )
+        if self.max_concurrent_dumps < 1:
+            errors.append(f"max_concurrent_dumps must be >= 1, got {self.max_concurrent_dumps}")
+        if not self.logcat_buffers:
+            errors.append("logcat_buffers must not be empty")
+        elif any(not isinstance(b, str) or not b.strip() for b in self.logcat_buffers):
+            errors.append("logcat_buffers entries must be non-empty strings")
+        if self.device_reboot_policy not in ("wait-and-resume", "fail-fast"):
+            errors.append(
+                f"device_reboot_policy must be wait-and-resume|fail-fast, "
+                f"got {self.device_reboot_policy!r}"
+            )
+        for name in ("policy_max_process_death", "policy_max_anr", "policy_max_restarts"):
+            if int(getattr(self, name)) < 0:
+                errors.append(f"{name} must be >= 0, got {getattr(self, name)}")
+        if not 0.0 <= float(self.policy_min_uptime_ratio) <= 1.0:
+            errors.append(
+                f"policy_min_uptime_ratio must be within [0, 1], got {self.policy_min_uptime_ratio}"
+            )
+        valid_types = {"java_crash", "native_crash", "anr", "process_death"}
+        for fail_type in self.policy_fail_on:
+            if fail_type not in valid_types:
+                errors.append(f"policy.fail_on entry {fail_type!r} is not a known event type")
+        if self.output_dir.exists() and self.output_dir.is_file():
+            errors.append(f"output_dir {self.output_dir} is a file, not a directory")
+        if errors:
+            raise ValueError("invalid stability config: " + "; ".join(errors))
 
     def config_effective(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -205,12 +270,21 @@ class StabilityTest:
         # `duration_sec` in the report reflects script-active time (not wall
         # clock that includes OS sleep / suspend periods).
         self._started_monotonic: Optional[float] = None
+        # Phase anchors (IMP-09): prepare (preflight/wait), observe (logcat
+        # collecting) and teardown (stop/report) are timed separately and the
+        # observation window is the coverage denominator.
+        self._collect_started_monotonic: Optional[float] = None
+        self._teardown_started_monotonic: Optional[float] = None
         self._ended_monotonic: Optional[float] = None
         self._exit_code: int = 0
         self._exit_reason: str = "duration_elapsed"
         self._result: Optional[Dict] = None
         self._started = False
         self._stopped = False
+        # Unified stop signal (IMP-13): KeyboardInterrupt, dashboard stop,
+        # device fail-fast and the duration deadline all funnel here.
+        self.stop_event = threading.Event()
+        self._fail_fast_event = threading.Event()
 
     @property
     def output_dir(self) -> Path:
@@ -287,7 +361,10 @@ class StabilityTest:
             LIFECYCLE_COLUMNS,
             LIFECYCLE_SCHEMA_TAG,
         )
-        self._logcat_writer = LogStreamWriter(self.config.output_dir)
+        self._logcat_writer = LogStreamWriter(
+            self.config.output_dir,
+            max_file_bytes=self.config.max_log_file_bytes,
+        )
 
         detection = DetectionConfig(
             enable_java_crash=self.config.enable_java_crash,
@@ -306,6 +383,8 @@ class StabilityTest:
             context_buffer_max_lines=self.config.context_buffer_max_lines,
             context_buffer_max_bytes=self.config.context_buffer_max_bytes,
             max_disk_bytes=self.config.max_disk_bytes,
+            min_free_bytes=self.config.min_free_bytes,
+            max_run_bytes=self.config.max_run_bytes,
             max_log_file_bytes=self.config.max_log_file_bytes,
             log_retention_hours=self.config.log_retention_hours,
             max_queue_size=self.config.max_queue_size,
@@ -325,6 +404,7 @@ class StabilityTest:
             resource_risk_interval_sec=self.config.resource_risk_interval_sec,
             resource_fd_growth_threshold=self.config.resource_fd_growth_threshold,
             resource_thread_growth_threshold=(self.config.resource_thread_growth_threshold),
+            resource_rss_growth_threshold_kb=(self.config.resource_rss_growth_threshold_kb),
         )
         diagnosis = DiagnosisConfig(
             mapping_file=self.config.mapping_file,
@@ -352,8 +432,12 @@ class StabilityTest:
             native_crash_dump_fn=self._native_crash_dump_fn,
             anr_dump_fn=self._anr_dump_fn,
             proc_death_dump_fn=self._proc_death_dump_fn,
+            on_fail_fast=self._fail_fast_event.set,
         )
         self._pool.start(initial_processes=procs)
+        # Observation window begins now — after preflight/wait/proc discovery,
+        # not before (IMP-09: coverage must not include preparation time).
+        self._collect_started_monotonic = time.monotonic()
 
         self._status = StatusWriter(
             self.config.output_dir,
@@ -380,6 +464,8 @@ class StabilityTest:
         if self._stopped:
             return
         self._stopped = True
+        self.stop_event.set()
+        self._teardown_started_monotonic = time.monotonic()
         try:
             if self._live is not None:
                 self._live.stop()
@@ -414,6 +500,27 @@ class StabilityTest:
         if self._bookmarks is None:
             raise RuntimeError("StabilityTest.bookmark() called before start()")
         self._bookmarks.append(label, metadata)
+
+    def wait(self, deadline: float) -> Optional[str]:
+        """Block until the unified stop event or `deadline` (wall clock).
+
+        Returns the stop reason (`fail_fast`, `stop_requested`) or None when
+        the duration elapsed normally. KeyboardInterrupt is left to the
+        caller (it must set the exit code before stop()).
+        """
+        while True:
+            if self._fail_fast_event.is_set():
+                return "fail_fast"
+            if self.stop_event.is_set():
+                return "stop_requested"
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return None
+            self.stop_event.wait(min(0.5, remaining))
+            if self._fail_fast_event.is_set():
+                return "fail_fast"
+            if self.stop_event.is_set():
+                return "stop_requested"
 
     def run_workload(self, workload: Workload) -> WorkloadResult:
         """Run a workload inside the test window (bookmarks + manifest)."""
@@ -488,13 +595,36 @@ class StabilityTest:
             }
         )
 
-        # Prefer monotonic delta for duration_sec — it does not advance
-        # while the OS suspends the process, so the reported duration
-        # always matches the configured run budget (regardless of wall
-        # clock divergence from system sleep).
+        # Observation duration = pool-start → teardown-start: the window
+        # logcat was actually supposed to cover (IMP-09). Preflight/wait
+        # preparation time is reported separately and never inflates
+        # coverage denominators.
         active_duration_sec: Optional[float] = None
-        if self._started_monotonic is not None and self._ended_monotonic is not None:
-            active_duration_sec = max(0.0, self._ended_monotonic - self._started_monotonic)
+        collect_start = (
+            self._collect_started_monotonic
+            if self._collect_started_monotonic is not None
+            else self._started_monotonic
+        )
+        obs_end = (
+            self._teardown_started_monotonic
+            if self._teardown_started_monotonic is not None
+            else self._ended_monotonic
+        )
+        if collect_start is not None and obs_end is not None:
+            active_duration_sec = max(0.0, obs_end - collect_start)
+
+        phase_timings: Dict[str, float] = {}
+        if self._started_monotonic is not None:
+            phase_timings["prepare_sec"] = round(
+                max(0.0, (collect_start or self._started_monotonic) - self._started_monotonic),
+                3,
+            )
+            phase_timings["observe_sec"] = round(active_duration_sec or 0.0, 3)
+            if self._teardown_started_monotonic is not None and self._ended_monotonic is not None:
+                phase_timings["teardown_sec"] = round(
+                    max(0.0, self._ended_monotonic - self._teardown_started_monotonic),
+                    3,
+                )
 
         sample_failures = self._pool.sample_failures() if self._pool is not None else {}
         task_states = self._pool.dump_task_states() if self._pool is not None else {}
@@ -516,6 +646,39 @@ class StabilityTest:
             adb_call_failures=adb_call_failures,
         )
         collectors = self._pool.collector_status() if self._pool is not None else {}
+        quota_audit = self._pool.quota_audit() if self._pool is not None else []
+        capabilities = self._pool.capabilities() if self._pool is not None else []
+        if self._device_info is not None:
+            sdk = self._device_info.sdk_int
+            abi = getattr(self._device_info, "abi", None) or getattr(
+                self._device_info, "cpu_abi", None
+            )
+            capabilities.append(
+                {
+                    "name": "api_level",
+                    "probe": "ro.build.version.sdk",
+                    "status": "available" if sdk else "unavailable",
+                    "detail": f"sdk_int={sdk}",
+                }
+            )
+            if abi:
+                capabilities.append(
+                    {
+                        "name": "device_abi",
+                        "probe": "ro.product.cpu.abi",
+                        "status": "available",
+                        "detail": str(abi),
+                    }
+                )
+        if self.config.mapping_file or self.config.native_symbols_dir:
+            capabilities.append(
+                {
+                    "name": "symbolication",
+                    "probe": "config",
+                    "status": "available",
+                    "detail": "mapping/native symbols configured",
+                }
+            )
         exit_info = self._pool.exit_info_records() if self._pool is not None else []
         device_events = self._pool.device_events() if self._pool is not None else []
         resource_risk = self._pool.resource_risk_events() if self._pool is not None else []
@@ -551,6 +714,8 @@ class StabilityTest:
                 "reasons": health.reasons,
             },
             collectors=collectors,
+            quota_audit=quota_audit,
+            capabilities=capabilities,
             exit_info=exit_info,
             device_events=device_events,
             resource_risk=resource_risk,
@@ -566,6 +731,7 @@ class StabilityTest:
             },
             ci_mode=self.config.ci_mode,
             duration_sec=active_duration_sec,
+            phase_timings=phase_timings,
         )
         result_builder.write(result, self.config.output_dir)
 

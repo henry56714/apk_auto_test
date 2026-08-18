@@ -94,7 +94,8 @@ def test_query_exit_info_filters_package_and_watermark():
         ),
     )
     records = query_exit_info(
-        adb, "com.example.app",
+        adb,
+        "com.example.app",
         since_epoch=datetime(2026, 5, 21, 10, 3, tzinfo=timezone.utc).timestamp(),
     )
     assert len(records) == 1
@@ -129,3 +130,62 @@ def test_parse_android12_plus_exit_info_format():
     assert rec.pss_kb == int(12.3 * 1024)
     assert rec.rss_kb == int(34.5 * 1024)
     assert rec.is_stability_failure is True
+
+
+# ── T-L0-010: unknown ExitInfo reason ────────────────────────────────────────
+
+
+def test_unknown_exit_info_reason_preserved_not_mislabeled():
+    """A future Android reason must keep its raw value, report category=unknown
+    and never be mislabeled as an expected exit."""
+    rec = parse_exit_info_text(
+        "Package: com.example.app\n"
+        "  Process: com.example.app (pid 7)\n"
+        "  Timestamp: 2026-08-13T10:00:00.000\n"
+        "  Reason: QUANTUM_FLUX_KILL\n"
+    )[0]
+    assert rec.exit_reason == "other"
+    assert rec.raw_reason == "QUANTUM_FLUX_KILL"
+    assert rec.category == "unknown"
+    assert rec.expected is False
+    assert rec.is_stability_failure is False  # unknown ≠ confirmed failure
+    assert rec.to_dict()["raw_reason"] == "QUANTUM_FLUX_KILL"
+
+
+def test_numeric_unknown_reason_preserved():
+    rec = parse_exit_info_text(
+        "Package: com.example.app\n"
+        "  Process: com.example.app (pid 7)\n"
+        "  Timestamp: 2026-08-13T10:00:00.000\n"
+        "  Reason: 37\n"
+    )[0]
+    assert rec.raw_reason == "37"
+    assert rec.category == "unknown"
+    assert rec.expected is False
+
+
+# ── T-L0-009: run-start watermark with no history + no repeated probe ────────
+
+
+def test_query_exit_info_reuses_capability_no_second_probe():
+    """When `available` is precomputed, query_exit_info must not probe again."""
+    adb = MagicMock()
+    adb.shell.return_value = MagicMock(
+        returncode=0,
+        stdout="Historical process exit information:\n",
+    )
+    records = query_exit_info(adb, "com.example.app", available=True)
+    assert records == []
+    # Exactly one exit-info dumpsys call (the query itself); no capability
+    # probe. (A tz-offset query is a separate, legitimate capability read.)
+    exit_info_calls = [
+        c for c in adb.shell.call_args_list if "dumpsys activity exit-info" in str(c.args[0])
+    ]
+    assert len(exit_info_calls) == 1
+
+
+def test_query_exit_info_skips_query_when_known_unavailable():
+    adb = MagicMock()
+    records = query_exit_info(adb, "com.example.app", available=False)
+    assert records == []
+    adb.shell.assert_not_called()

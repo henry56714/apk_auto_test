@@ -95,16 +95,19 @@ def group_incidents(incidents: List[Dict]) -> List[Dict]:
     groups: Dict[str, Dict] = {}
     for inc in incidents:
         fp = fingerprint_incident(inc)
-        g = groups.setdefault(fp, {
-            "fingerprint": fp,
-            "type": inc.get("type"),
-            "occurrence_count": 0,
-            "first_seen_at": None,
-            "last_seen_at": None,
-            "affected_processes": [],
-            "representative_incident_id": None,
-            "occurrence_ids": [],
-        })
+        g = groups.setdefault(
+            fp,
+            {
+                "fingerprint": fp,
+                "type": inc.get("type"),
+                "occurrence_count": 0,
+                "first_seen_at": None,
+                "last_seen_at": None,
+                "affected_processes": [],
+                "representative_incident_id": None,
+                "occurrence_ids": [],
+            },
+        )
         g["occurrence_count"] += 1
         ts = inc.get("triggered_at", "")
         if g["first_seen_at"] is None or ts < g["first_seen_at"]:
@@ -119,7 +122,23 @@ def group_incidents(incidents: List[Dict]) -> List[Dict]:
         g["occurrence_ids"].append(inc.get("id"))
 
     out = list(groups.values())
-    out.sort(key=lambda g: (g["last_seen_at"] or ""), reverse=True)
+    out.sort(key=lambda g: g["last_seen_at"] or "", reverse=True)
     for g in out:
         g["affected_processes"].sort()
+        # S2-01: repeated crashes of the same fingerprint form a crash loop
+        # (≥3 occurrences, or ≥2 startup crashes).
+        if g["type"] in ("java_crash", "native_crash") and (
+            g["occurrence_count"] >= 3
+            or (
+                g["occurrence_count"] >= 2
+                and any(
+                    (i.get("evidence") or {}).get("startup_crash")
+                    for i in incidents
+                    if i.get("id") in g["occurrence_ids"]
+                )
+            )
+        ):
+            g["kind"] = "crash_loop"
+        else:
+            g["kind"] = "occurrence_group"
     return out

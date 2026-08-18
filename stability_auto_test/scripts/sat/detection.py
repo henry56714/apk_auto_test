@@ -32,16 +32,16 @@ log = logging.getLogger(__name__)
 # am_proc_died event format: [user, pid, name, oom_adj, procState]
 # parts[4] = procState at time of death (ActivityManager.PROCESS_STATE_* constant).
 _PROC_STATE_LABELS: Dict[int, str] = {
-    0:  "persistent",
-    1:  "persistent-ui",
-    2:  "top",
-    3:  "bound-top",
-    4:  "foreground-service",
-    5:  "bound-foreground-service",
-    6:  "important-foreground",
-    7:  "important-background",
-    8:  "transient-background",
-    9:  "backup",
+    0: "persistent",
+    1: "persistent-ui",
+    2: "top",
+    3: "bound-top",
+    4: "foreground-service",
+    5: "bound-foreground-service",
+    6: "important-foreground",
+    7: "important-background",
+    8: "transient-background",
+    9: "backup",
     10: "service",
     11: "receiver",
     12: "top-sleeping",
@@ -77,7 +77,10 @@ EVENT_ANR = "anr"
 EVENT_PROCESS_DEATH = "process_death"
 
 ALL_EVENT_TYPES = (
-    EVENT_JAVA_CRASH, EVENT_NATIVE_CRASH, EVENT_ANR, EVENT_PROCESS_DEATH,
+    EVENT_JAVA_CRASH,
+    EVENT_NATIVE_CRASH,
+    EVENT_ANR,
+    EVENT_PROCESS_DEATH,
 )
 
 EVENT_SOURCE_LOGCAT = "logcat"
@@ -90,20 +93,27 @@ class StabilityEvent:
     event_type: str
     process: str
     pid: int
-    triggered_at: str          # ISO UTC string from utils.utc_now_iso()
+    triggered_at: str  # ISO UTC string from utils.utc_now_iso()
     severity: str = "fatal"
     summary: str = ""
     source: str = EVENT_SOURCE_LOGCAT
     # Type-specific evidence fields:
-    exception_class: Optional[str] = None     # java_crash
-    signal: Optional[str] = None              # native_crash
-    fault_addr: Optional[str] = None          # native_crash
-    reason: Optional[str] = None              # anr / process_death
+    exception_class: Optional[str] = None  # java_crash
+    crashing_thread: Optional[str] = None  # java_crash: FATAL EXCEPTION: <thread>
+    cause_chain: List[str] = field(default_factory=list)  # java_crash: Caused by: chain
+    signal: Optional[str] = None  # native_crash
+    fault_addr: Optional[str] = None  # native_crash
+    reason: Optional[str] = None  # anr / process_death
     top_frames: List[str] = field(default_factory=list)
+    # Native crash PC addresses (one per DEBUG frame, same order as frames).
+    pc_addresses: List[str] = field(default_factory=list)
     raw_lines: List[str] = field(default_factory=list)
     # Original device-side timestamp from the logcat line (parser preserves it
     # verbatim; the canonical `triggered_at` uses host wall-clock observation).
     device_ts: Optional[str] = None
+    # Fault marker id from the `SAT_FAULT_BEGIN` line that preceded this event
+    # (Fault Lab actions); used by fusion and action-window correlation.
+    fault_id: Optional[str] = None
     # Stable event identifier assigned by the dispatcher; referenced by the
     # events CSV, incident journal and report.
     event_id: Optional[str] = None
@@ -149,7 +159,7 @@ DEBUG_SIGNAL_RE = re.compile(
     r"^signal\s+(?P<num>\d+)\s+\((?P<name>[A-Z]+)\)"
     r"(?:.*?fault addr\s+(?P<addr>\S+))?"
 )
-DEBUG_FRAME_RE = re.compile(r"^\s*#(?P<idx>\d+)\s+pc\s+\S+\s+(?P<rest>.+)$")
+DEBUG_FRAME_RE = re.compile(r"^\s*#(?P<idx>\d+)\s+pc\s+(?P<pc>\S+)\s+(?P<rest>.+)$")
 
 # Events-buffer tags carry comma-separated payloads inside brackets.
 EVENTS_AM_RE = re.compile(r"^\[(?P<payload>.*)\]\s*$")
@@ -169,7 +179,9 @@ class _JavaCrashState:
     process: Optional[str] = None
     exception_class: Optional[str] = None
     summary: Optional[str] = None
+    crashing_thread: Optional[str] = None
     frames: List[str] = field(default_factory=list)
+    cause_chain: List[str] = field(default_factory=list)
     raw: List[str] = field(default_factory=list)
     device_ts: Optional[str] = None
 
@@ -181,6 +193,7 @@ class _NativeCrashState:
     signal: Optional[str] = None
     fault_addr: Optional[str] = None
     frames: List[str] = field(default_factory=list)
+    pc_addresses: List[str] = field(default_factory=list)
     raw: List[str] = field(default_factory=list)
     device_ts: Optional[str] = None
 
@@ -200,6 +213,10 @@ MAX_BLOCK_LINES = 400
 # How many subsequent ActivityManager lines after `ANR in` we consider part of
 # the same ANR record.
 ANR_CONTEXT_LINES = 40
+# How many consecutive unparseable lines an open block tolerates before it is
+# force-terminated (binary banners can legitimately appear inside crash dumps,
+# but an endless garbage stream must never grow the accumulator).
+MAX_UNPARSEABLE_RUN = 3
 
 
 class LogcatLineParser:
@@ -231,6 +248,10 @@ class LogcatLineParser:
         self._java: Optional[_JavaCrashState] = None
         self._native: Optional[_NativeCrashState] = None
         self._anr: Optional[_AnrState] = None
+        self._unparseable_run = 0
+
+    def _any_block_open(self) -> bool:
+        return self._java is not None or self._native is not None or self._anr is not None
 
     # ------------------------------------------------------------------
 
@@ -238,10 +259,19 @@ class LogcatLineParser:
         """Process one logcat line. Returns 0+ completed events."""
         m = LOGCAT_LINE_RE.match(line.rstrip("\n"))
         if not m:
-            # Unparseable line. If we're inside a block, treat it as the block
-            # ending so we don't accumulate garbage forever.
+            # Unparseable line (binary banner / continuation). Tolerate a few
+            # inside an open block so an already-identified crash is not lost
+            # (T-L1-009), then force-terminate to stay bounded.
+            self._unparseable_run += 1
+            if self._any_block_open() and self._unparseable_run <= MAX_UNPARSEABLE_RUN:
+                for state in (self._java, self._native, self._anr):
+                    if state is not None:
+                        state.raw.append(line.rstrip("\n"))
+                return []
+            self._unparseable_run = 0
             return self._flush_all_terminators()
 
+        self._unparseable_run = 0
         gd = m.groupdict()
         ts = gd["ts"]
         pid = int(gd["pid"])
@@ -261,6 +291,9 @@ class LogcatLineParser:
                     if ev:
                         emitted.append(ev)
                 self._java = _JavaCrashState(pid=pid, tid=tid, device_ts=ts)
+                # `FATAL EXCEPTION: <thread>` — the crashing thread matters
+                # for startup/background classification (S2-01).
+                self._java.crashing_thread = msg.split(":", 1)[1].strip() if ":" in msg else None
                 self._java.raw.append(line.rstrip("\n"))
                 return emitted
             if self._java is not None and self._java.pid == pid:
@@ -369,6 +402,12 @@ class LogcatLineParser:
                 st.exception_class = mexc.group("exc")
                 st.summary = msg.strip()
                 return
+        # Caused-by chain (T-L0-026): keep every cause, not just the top.
+        if msg.strip().startswith("Caused by:"):
+            mexc = JAVA_EXC_RE.match(msg.strip()[len("Caused by:") :].strip())
+            if mexc and len(st.cause_chain) < 8:
+                st.cause_chain.append(mexc.group("exc"))
+                return
         mfr = JAVA_FRAME_RE.match(msg)
         if mfr and len(st.frames) < 10:
             st.frames.append(mfr.group("frame").strip())
@@ -390,6 +429,8 @@ class LogcatLineParser:
             summary=summary,
             source=EVENT_SOURCE_LOGCAT,
             exception_class=st.exception_class,
+            crashing_thread=st.crashing_thread,
+            cause_chain=list(st.cause_chain),
             top_frames=list(st.frames),
             raw_lines=list(st.raw),
             device_ts=st.device_ts,
@@ -441,7 +482,12 @@ class LogcatLineParser:
             return None
         m_fr = DEBUG_FRAME_RE.match(msg)
         if m_fr and len(st.frames) < 16:
-            st.frames.append(f"#{m_fr.group('idx')} {m_fr.group('rest').strip()}")
+            # Keep the full `#xx pc <addr> <module>` form — the symbolizer
+            # needs the PC address (IMP-04: pc must survive detection).
+            st.frames.append(
+                f"#{m_fr.group('idx')} pc {m_fr.group('pc')} {m_fr.group('rest').strip()}"
+            )
+            st.pc_addresses.append(m_fr.group("pc"))
         return None
 
     def _finalize_native(self) -> Optional[StabilityEvent]:
@@ -451,9 +497,8 @@ class LogcatLineParser:
             return None
         if not _name_matches_package(st.process, self.package):
             return None
-        summary = (
-            f"native crash {st.signal or '?'}"
-            + (f" @ {st.fault_addr}" if st.fault_addr else "")
+        summary = f"native crash {st.signal or '?'}" + (
+            f" @ {st.fault_addr}" if st.fault_addr else ""
         )
         return StabilityEvent(
             event_type=EVENT_NATIVE_CRASH,
@@ -466,6 +511,7 @@ class LogcatLineParser:
             signal=st.signal,
             fault_addr=st.fault_addr,
             top_frames=list(st.frames),
+            pc_addresses=list(st.pc_addresses),
             raw_lines=list(st.raw),
             device_ts=st.device_ts,
         )
@@ -514,7 +560,10 @@ class LogcatLineParser:
     # ── Events-buffer tags (am_anr / am_proc_died / am_kill) ──
 
     def _make_event_from_events_buffer(
-        self, event_type: str, msg: str, ts: str,
+        self,
+        event_type: str,
+        msg: str,
+        ts: str,
     ) -> Optional[StabilityEvent]:
         m = EVENTS_AM_RE.match(msg.strip())
         if not m:
@@ -555,7 +604,7 @@ class LogcatLineParser:
 # ── Deduper ───────────────────────────────────────────────────────────────────
 
 # Matches HH:MM:SS[.fraction] inside any timestamp string.
-_DEVICE_TS_RE = re.compile(r'(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?')
+_DEVICE_TS_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?")
 
 
 def _parse_device_ts_sec(ts: Optional[str]) -> Optional[float]:

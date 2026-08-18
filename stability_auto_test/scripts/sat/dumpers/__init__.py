@@ -42,12 +42,32 @@ def fetch_and_write_dropbox(
     event: StabilityEvent,
     incidents_dir: Path,
     base: str,
+    ctx=None,
+    fetcher=None,
 ) -> Optional[str]:
-    """Pull matching dropbox entry and write to <base>_dropbox.txt. Returns filename or None."""
+    """Pull matching dropbox entry and write to <base>_dropbox.txt. Returns filename or None.
+
+    `ctx` (optional `TaskContext`) bounds the ADB call with the task's shared
+    remaining deadline and enables cooperative cancellation. `fetcher` may be
+    a run-level `CachingDropboxFetcher` (storm-bounded, IMP-20).
+    """
     from ..collectors.dropbox import DropboxFetcher
-    body = DropboxFetcher(adb).fetch(event.event_type, event.process, event.device_ts)
+
+    fetch_timeout = 30.0
+    if ctx is not None:
+        ctx.check()
+        fetch_timeout = ctx.timeout_for(fetch_timeout)
+    fetcher = fetcher or DropboxFetcher(adb)
+    body = fetcher.fetch(
+        event.event_type,
+        event.process,
+        event.device_ts,
+        timeout=fetch_timeout,
+    )
     if not body:
         return None
+    if ctx is not None:
+        ctx.check()
     path = incidents_dir / f"{base}_dropbox.txt"
     path.write_text("\n".join(body) + "\n", encoding="utf-8")
     return path.name
@@ -71,10 +91,13 @@ def build_incident_dict(
         "trace_file": trace_file,
         "dropbox_file": dropbox_file,
         "exception_class": event.exception_class,
+        "crashing_thread": event.crashing_thread,
+        "cause_chain": list(event.cause_chain),
         "signal": event.signal,
         "fault_addr": event.fault_addr,
         "reason": event.reason,
         "top_frames": list(event.top_frames),
+        "pc_addresses": list(event.pc_addresses),
         "source": event.source,
         "dedup_count": 1,
         "fallback_reason": fallback_reason,

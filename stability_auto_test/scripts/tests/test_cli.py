@@ -16,6 +16,7 @@ def test_parse_duration_units():
 
 def test_parse_duration_bad():
     import argparse
+
     with pytest.raises(argparse.ArgumentTypeError):
         _parse_duration("abc")
 
@@ -47,15 +48,17 @@ detection:
 def test_cli_overrides_yaml(tmp_path: Path):
     yaml = tmp_path / "cfg.yaml"
     yaml.write_text(
-        "package: com.example.app\n"
-        "detection:\n"
-        "  dedup_window_sec: 12\n",
+        "package: com.example.app\ndetection:\n  dedup_window_sec: 12\n",
         encoding="utf-8",
     )
-    args = build_parser().parse_args([
-        "--output", str(tmp_path / "o"),
-        "--dedup-window", "3",
-    ])
+    args = build_parser().parse_args(
+        [
+            "--output",
+            str(tmp_path / "o"),
+            "--dedup-window",
+            "3",
+        ]
+    )
     cfg = build_config(args, yaml)
     assert cfg.dedup_window_sec == 3
 
@@ -73,6 +76,8 @@ class _FakeStabilityTest:
         self._result = None
         self._stopped = False
         self.exit_calls = []
+        self._bookmarks = None
+        self._exit_reason = "duration_elapsed"
 
     def start(self):
         pass
@@ -80,6 +85,16 @@ class _FakeStabilityTest:
     def stop(self):
         self._stopped = True
         self._result = self._make_result()
+
+    def wait(self, deadline):
+        import time as _time
+
+        while _time.time() < deadline:
+            _time.sleep(0.05)
+        return None
+
+    def rewrite_reports(self):
+        pass
 
     def set_exit(self, code, reason):
         self.exit_calls.append((code, reason))
@@ -97,27 +112,48 @@ class _FakeStabilityTest:
 
 def test_cli_default_mode_returns_zero_on_crash(monkeypatch):
     monkeypatch.setattr(cli, "StabilityTest", _FakeStabilityTest)
-    rc = cli.main([
-        "--package", "com.example.crash", "--duration", "1s", "--output", "/tmp/x",
-    ])
+    rc = cli.main(
+        [
+            "--package",
+            "com.example.crash",
+            "--duration",
+            "1s",
+            "--output",
+            "/tmp/x",
+        ]
+    )
     assert rc == cli.EXIT_OK
 
 
 def test_cli_ci_mode_returns_gate_failed_on_crash(monkeypatch):
     monkeypatch.setattr(cli, "StabilityTest", _FakeStabilityTest)
-    rc = cli.main([
-        "--package", "com.example.crash", "--ci", "--duration", "1s",
-        "--output", "/tmp/x",
-    ])
+    rc = cli.main(
+        [
+            "--package",
+            "com.example.crash",
+            "--ci",
+            "--duration",
+            "1s",
+            "--output",
+            "/tmp/x",
+        ]
+    )
     assert rc == cli.EXIT_GATE_FAILED
 
 
 def test_cli_ci_mode_returns_zero_when_clean(monkeypatch):
     monkeypatch.setattr(cli, "StabilityTest", _FakeStabilityTest)
-    rc = cli.main([
-        "--package", "com.example.app", "--ci", "--duration", "1s",
-        "--output", "/tmp/x",
-    ])
+    rc = cli.main(
+        [
+            "--package",
+            "com.example.app",
+            "--ci",
+            "--duration",
+            "1s",
+            "--output",
+            "/tmp/x",
+        ]
+    )
     assert rc == cli.EXIT_OK
 
 
@@ -130,10 +166,17 @@ def test_cli_inconclusive_returns_exit_4(monkeypatch):
             }
 
     monkeypatch.setattr(cli, "StabilityTest", Inconclusive)
-    rc = cli.main([
-        "--package", "com.example.app", "--ci", "--duration", "1s",
-        "--output", "/tmp/x",
-    ])
+    rc = cli.main(
+        [
+            "--package",
+            "com.example.app",
+            "--ci",
+            "--duration",
+            "1s",
+            "--output",
+            "/tmp/x",
+        ]
+    )
     assert rc == cli.EXIT_INCONCLUSIVE
 
 
@@ -144,9 +187,18 @@ def test_cli_interrupt_records_exit_130_in_report(monkeypatch):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cli.time, "sleep", interrupt)
-    rc = cli.main([
-        "--package", "com.example.app", "--duration", "1s", "--output", "/tmp/x",
-    ])
+    rc = cli.main(
+        [
+            "--package",
+            "com.example.app",
+            "--duration",
+            "1s",
+            "--output",
+            "/tmp/x",
+        ]
+    )
     assert rc == cli.EXIT_SIGINT
-    assert any(code == cli.EXIT_SIGINT and reason == "interrupted"
-               for code, reason in cli.StabilityTest._last_instance.exit_calls)
+    assert any(
+        code == cli.EXIT_SIGINT and reason == "interrupted"
+        for code, reason in cli.StabilityTest._last_instance.exit_calls
+    )

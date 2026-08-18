@@ -214,3 +214,25 @@ def test_flush_emits_pending_block():
     events = parser.flush()
     assert len(events) == 1
     assert events[0].event_type == EVENT_JAVA_CRASH
+
+
+# ── T-L0-030: fuzz robustness (bounded, no crash, warning path) ─────────────
+
+def test_parser_fuzz_never_crashes_and_stays_bounded():
+    import random
+    import string
+
+    from sat.detection import MAX_BLOCK_LINES, LogcatLineParser
+
+    random.seed(42)
+    parser = LogcatLineParser(
+        "com.example.app", now_iso_fn=lambda: "2026-08-13T10:00:00Z",
+    )
+    for _ in range(3000):
+        n = random.randint(0, 300)
+        line = "".join(random.choice(string.printable) for _ in range(n))
+        parser.feed_line(line)
+    parser.flush()
+    # Accumulator bounded regardless of garbage.
+    assert len(parser._java.raw) <= MAX_BLOCK_LINES + 10 if parser._java else True
+    assert len(parser._anr.raw) <= MAX_BLOCK_LINES + 10 if parser._anr else True

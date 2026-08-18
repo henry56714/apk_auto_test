@@ -85,7 +85,7 @@ def test_build_and_schema_validate(tmp_path: Path):
     written = result_builder.write(result, tmp_path)
     assert written.exists()
     on_disk = json.loads(written.read_text())
-    assert on_disk["schema_version"] == "1.14"
+    assert on_disk["schema_version"] == "1.15"
     assert on_disk["event_pipeline"]["detected_count"] == 0
 
 

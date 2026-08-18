@@ -18,7 +18,10 @@ caps prevent runaway disk usage.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
+import os
+import re
 import threading
 import time
 import uuid
@@ -34,7 +37,7 @@ from .analyzers.java_retrace import deobfuscate_stack
 from .analyzers.native_symbolizer import symbolize_frames
 from .backpressure import BackpressureController, EvidenceSampler
 from .collectors.device_health import DeviceHealthMonitor
-from .collectors.exit_info import latest_watermark, query_exit_info
+from .collectors.exit_info import exit_info_available, latest_watermark, query_exit_info
 from .collectors.logcat import LogcatStream
 from .collectors.resource_risk import ResourceRiskDetector, ResourceRiskMonitor
 from .context import LogcatContextBuffer, LogEntry, format_context_slice
@@ -45,7 +48,6 @@ from .detection import (
     EVENT_NATIVE_CRASH,
     EVENT_PROCESS_DEATH,
     LOGCAT_LINE_RE,
-    Deduper,
     LogcatLineParser,
     StabilityEvent,
 )
@@ -55,6 +57,7 @@ from .dumpers import base_name_for
 from .dumpers import java_crash as java_crash_dumper
 from .dumpers import native_crash as native_crash_dumper
 from .dumpers import proc_death as proc_death_dumper
+from .fusion import FusionEngine, Occurrence
 from .journal import (
     STATUS_DROPPED_BY_BACKPRESSURE,
     STATUS_DROPPED_BY_CAP,
@@ -63,9 +66,19 @@ from .journal import (
     STATUS_TIMED_OUT,
     IncidentJournal,
 )
+from .observations import (
+    CONFIDENCE_HIGH,
+    CONFIDENCE_MEDIUM,
+    SEVERITY_ERROR,
+    SEVERITY_FATAL,
+    SOURCE_EXIT_INFO,
+    Observation,
+    observation_from_event,
+)
 from .quota import QuotaConfig, QuotaTracker
 from .selfmon import SelfMonitor
 from .storage import CsvStreamWriter, LogStreamWriter
+from .tasks import TaskCancelled, TaskContext
 from .utils import utc_now_iso
 
 log = logging.getLogger(__name__)
@@ -94,7 +107,9 @@ class DumpsConfig:
     context_retention_sec: Optional[float] = None
     context_buffer_max_lines: int = 5000
     context_buffer_max_bytes: int = 4 * 1024 * 1024
-    max_disk_bytes: Optional[int] = None
+    max_disk_bytes: Optional[int] = None  # deprecated alias for min_free_bytes
+    min_free_bytes: Optional[int] = None
+    max_run_bytes: Optional[int] = None
     max_log_file_bytes: int = 512 * 1024 * 1024
     log_retention_hours: int = 24
     max_queue_size: int = 50
@@ -116,6 +131,7 @@ class CollectorsConfig:
     resource_risk_interval_sec: float = 30.0
     resource_fd_growth_threshold: int = 200
     resource_thread_growth_threshold: int = 50
+    resource_rss_growth_threshold_kb: int = 300 * 1024
 
 
 @dataclass(frozen=True)
@@ -128,11 +144,31 @@ class DiagnosisConfig:
 
 DUMP_TASK_STATES = ("queued", "running", "persisted", "failed", "timed_out")
 
+# Fault Lab marker: SAT_FAULT_BEGIN id=<uuid> type=<FAULT_TYPE> process=<name>
+_FAULT_BEGIN_RE = re.compile(
+    r"SAT_FAULT_BEGIN\s+id=(?P<id>\S+)\s+type=(?P<ftype>\S+)"
+    r"(?:\s+process=(?P<process>\S+))?"
+)
+# ActivityManager process start (for startup-crash classification when the
+# process dies before the watcher's first reconcile).
+_START_PROC_RE = re.compile(
+    r"Start proc\s+\d+:(?P<proc>\S+?)(?:/u\d+a?\d*)?\s+for\s+"
+)
+# App self-reported resource sample (Fault Lab SAT_RESOURCE_SAMPLE marker).
+_RESOURCE_SAMPLE_RE = re.compile(
+    r"SAT_RESOURCE_SAMPLE\s+id=(?P<id>\S+)"
+    r"(?:\s+fd_count=(?P<fd>-?\d+))?"
+    r"(?:\s+thread_count=(?P<threads>-?\d+))?"
+    r"(?:\s+rss_kb=(?P<rss>-?\d+))?"
+)
+_FAULT_MARKER_TTL_SEC = 120.0
+
 
 @dataclass
 class _DumpTask:
     event: Optional[StabilityEvent] = None
     anchor_sec: float = 0.0
+    deadline: float = 0.0
     state: str = "queued"
     future: Optional[concurrent.futures.Future] = None
     cancelled: threading.Event = field(default_factory=threading.Event)
@@ -160,6 +196,7 @@ class CollectorPool:
         adb_path: str = "adb",
         # Test injection points (production passes none):
         discover_fn: Optional[Callable[[Adb, str], List[Process]]] = None,
+        on_fail_fast: Optional[Callable[[], None]] = None,
         logcat_stream_factory: Optional[Callable[[], LogcatStream]] = None,
         java_crash_dump_fn: Optional[Callable] = None,
         native_crash_dump_fn: Optional[Callable] = None,
@@ -187,6 +224,7 @@ class CollectorPool:
         self._adb_path = adb_path
 
         self._discover = discover_fn or discovery.discover
+        self._on_fail_fast = on_fail_fast
         self._logcat_stream_factory = logcat_stream_factory or self._default_logcat_factory
         self._java_crash_dump = java_crash_dump_fn or java_crash_dumper.run
         self._native_crash_dump = native_crash_dump_fn or native_crash_dumper.run
@@ -198,6 +236,9 @@ class CollectorPool:
         self._procs: Dict[str, Process] = {}
         self._procs_lock = threading.RLock()
         self._gone_at: Dict[str, float] = {}
+        # process → host monotonic time of its latest (re)start (S2-01:
+        # startup-crash classification).
+        self._proc_started_monotonic: Dict[str, float] = {}
 
         self._global_stop = threading.Event()
         self._logcat_thread: Optional[threading.Thread] = None
@@ -212,8 +253,9 @@ class CollectorPool:
         self._quota = QuotaTracker(
             self._incidents_dir.parent if self._incidents_dir else Path("."),
             QuotaConfig(
-                max_disk_bytes=self._dumps_cfg.max_disk_bytes,
-                max_log_file_bytes=self._dumps_cfg.max_log_file_bytes,
+                min_free_bytes=(self._dumps_cfg.min_free_bytes or self._dumps_cfg.max_disk_bytes),
+                max_run_bytes=self._dumps_cfg.max_run_bytes,
+                max_file_bytes=self._dumps_cfg.max_log_file_bytes,
                 log_retention_hours=self._dumps_cfg.log_retention_hours,
                 max_queue_size=self._dumps_cfg.max_queue_size,
                 evidence_sample_every_n=self._dumps_cfg.evidence_sample_every_n,
@@ -227,10 +269,28 @@ class CollectorPool:
         )
         self._self_monitor: Optional[SelfMonitor] = None
 
-        self._deduper = Deduper(
-            self._detection.dedup_window_sec,
+        self._fusion = FusionEngine(
             device_ts_window_sec=self._detection.device_ts_window_sec,
+            host_window_sec=self._detection.dedup_window_sec,
+            year=self._query_device_year(),
         )
+        self._occurrence_by_event_id: Dict[str, Occurrence] = {}
+        # event_id → incident base name (for later cross-source annotation).
+        self._event_base_by_id: Dict[str, str] = {}
+        # process → (fault_id, host_sec): latest SAT_FAULT_BEGIN marker per process.
+        self._fault_markers: Dict[str, tuple] = {}
+        self._exit_capable: Optional[bool] = None
+        # (mtime, manifest) cache for the workload manifest (action windows).
+        self._manifest_cache: Optional[tuple] = None
+        # Capability probes (IMP-23): what this device/run can actually see.
+        self._capabilities: Dict[str, Dict] = {}
+        # Run-level DropBox cache: storm-bounded dumpsys calls (IMP-20).
+        from .collectors.dropbox import CachingDropboxFetcher
+
+        self._dropbox_fetcher = CachingDropboxFetcher(self._adb)
+        # device_ts → first host monotonic time that line was observed
+        # (context slices anchor on the first trigger line, IMP-09).
+        self._first_host_ts_by_device_ts: Dict[str, float] = {}
         context_retention = self._dumps_cfg.context_retention_sec or (
             self._dumps_cfg.pre_context_sec + self._dumps_cfg.post_context_sec + 60.0
         )
@@ -288,6 +348,7 @@ class CollectorPool:
                 detector=ResourceRiskDetector(
                     fd_growth_threshold=(self._collectors_cfg.resource_fd_growth_threshold),
                     thread_growth_threshold=(self._collectors_cfg.resource_thread_growth_threshold),
+                    rss_growth_threshold_kb=(self._collectors_cfg.resource_rss_growth_threshold_kb),
                 ),
             )
             self._resource_monitor.start()
@@ -300,10 +361,38 @@ class CollectorPool:
             )
             self._self_monitor.start()
 
+        # Probe exit-info capability exactly once; later queries reuse it
+        # (IMP-03: no repeated probe per query).
         try:
-            self._exit_watermark = latest_watermark(self._adb, self._package)
+            self._exit_capable = exit_info_available(self._adb)
+        except Exception:
+            self._exit_capable = False
+        self._probe_capabilities()
+        try:
+            history_watermark = latest_watermark(
+                self._adb,
+                self._package,
+                available=self._exit_capable,
+            )
         except Exception:
             log.exception("exit-info watermark query failed; using no watermark")
+            history_watermark = None
+        device_epoch = self._query_device_epoch_sec()
+        # The run-start watermark is *at least* the device's current epoch so
+        # records from previous runs can never pollute this run (IMP-03).
+        if history_watermark is None:
+            self._exit_watermark = device_epoch
+        elif device_epoch is None:
+            self._exit_watermark = history_watermark
+        else:
+            self._exit_watermark = max(history_watermark, device_epoch)
+        if self._exit_watermark is not None:
+            # Host/device clock skew tolerance: an event that happened right
+            # after run start can carry a device timestamp a few seconds
+            # before the watermark when the two clocks differ. 7 s covers
+            # the observed ~6 s skew while keeping back-to-back runs from
+            # seeing each other's records.
+            self._exit_watermark = max(0.0, self._exit_watermark - 7.0)
 
         self._watcher_thread = threading.Thread(
             target=self._watch_loop,
@@ -352,13 +441,34 @@ class CollectorPool:
         if self._self_monitor is not None:
             self._self_monitor.stop()
 
+        records = []
         try:
-            records = query_exit_info(
-                self._adb,
-                self._package,
-                since_epoch=self._exit_watermark,
-            )
+            # The AM can finish writing an ExitInfo record a few seconds
+            # after the visible crash; retry once and merge so a just-written
+            # record is never missed at run end.
+            for attempt in range(2):
+                batch = query_exit_info(
+                    self._adb,
+                    self._package,
+                    since_epoch=self._exit_watermark,
+                    available=self._exit_capable,
+                )
+                if batch and attempt > 0:
+                    known = {(r.pid, r.timestamp) for r in records}
+                    records.extend(r for r in batch if (r.pid, r.timestamp) not in known)
+                else:
+                    records = list(batch)
+                if records and attempt == 0:
+                    break
+                if not records:
+                    time.sleep(0.5)
             self._exit_records = [r.to_dict() for r in records]
+            log.info(
+                "exit-info stop query: watermark=%s records=%d",
+                self._exit_watermark,
+                len(records),
+            )
+            self._fuse_exit_info(records)
         except Exception:
             log.exception("exit-info query failed at stop")
 
@@ -476,6 +586,11 @@ class CollectorPool:
         if self._collectors_cfg.device_reboot_policy == "fail-fast":
             self._accepting = False
             self._global_stop.set()
+            if self._on_fail_fast is not None:
+                try:
+                    self._on_fail_fast()
+                except Exception:
+                    log.exception("fail-fast callback failed")
         if self._logcat_stream is not None:
             self._logcat_stream.stop()
 
@@ -497,6 +612,63 @@ class CollectorPool:
     def sample_failures(self) -> Dict[str, int]:
         with self._event_counts_lock:
             return dict(self._sample_failures)
+
+    def quota_audit(self) -> List[Dict]:
+        return [dict(a) for a in self._quota.audit]
+
+    def capabilities(self) -> List[Dict]:
+        """Machine-readable capability list (IMP-23)."""
+        out = []
+        for name, cap in sorted(self._capabilities.items()):
+            out.append({"name": name, **cap})
+        return out
+
+    def _probe_capabilities(self) -> None:
+        """Probe what this device/run can see (trace dirs, exit-info, ...)."""
+        self._capabilities = {
+            "exit_info": {
+                "probe": "dumpsys activity exit-info",
+                "status": "available" if self._exit_capable else "unavailable",
+                "detail": (
+                    "ApplicationExitInfo readable"
+                    if self._exit_capable
+                    else "command failed or no history"
+                ),
+            },
+            "logcat": {
+                "probe": f"adb logcat -b {','.join(self._collectors_cfg.logcat_buffers)}",
+                "status": "available" if self._collectors_cfg.logcat_enabled else "disabled",
+                "detail": "configured buffers",
+            },
+        }
+        for name, remote_dir in (
+            ("anr_trace_dir", "/data/anr/"),
+            ("tombstone_dir", "/data/tombstones/"),
+        ):
+            try:
+                r = self._adb.shell(
+                    f"ls {remote_dir} >/dev/null 2>&1; echo $?",
+                    check=False,
+                    timeout=5.0,
+                )
+                accessible = r.returncode == 0 and r.stdout.strip() == "0"
+            except Exception as e:  # noqa: BLE001 - capability probes stay quiet
+                accessible = False
+                self._capabilities[name] = {
+                    "probe": f"ls {remote_dir}",
+                    "status": "unavailable",
+                    "detail": f"probe failed: {e}",
+                    "degraded_path": "fallback to logcat/dropbox evidence",
+                }
+                continue
+            self._capabilities[name] = {
+                "probe": f"ls {remote_dir}",
+                "status": "available" if accessible else "unavailable",
+                "detail": ("pullable traces" if accessible else "permission denied on user build"),
+                "degraded_path": (
+                    None if accessible else "fallback_reason recorded; run continues"
+                ),
+            }
 
     # ── default factory ──
 
@@ -523,6 +695,32 @@ class CollectorPool:
             return None
         ts = r.stdout.strip().replace("_", " ")
         return ts if ts else None
+
+    def _query_device_year(self) -> Optional[int]:
+        """Device year for parsing short-format logcat timestamps."""
+        try:
+            r = self._adb.shell("date +%Y", check=False, timeout=3.0)
+        except Exception:
+            return None
+        if r.returncode != 0:
+            return None
+        try:
+            return int(r.stdout.strip())
+        except ValueError:
+            return None
+
+    def _query_device_epoch_sec(self) -> Optional[float]:
+        """Current device epoch seconds (ExitInfo watermark floor, IMP-03)."""
+        try:
+            r = self._adb.shell("date +%s", check=False, timeout=3.0)
+        except Exception:
+            return None
+        if r.returncode != 0:
+            return None
+        try:
+            return float(r.stdout.strip())
+        except ValueError:
+            return None
 
     # ── filter ──
 
@@ -566,6 +764,7 @@ class CollectorPool:
                 if self._global_stop.is_set():
                     break
                 self._append_context_entry(line)
+                self._record_fault_marker(line)
                 if self._logcat_writer is not None:
                     try:
                         self._logcat_writer.write_line(line)
@@ -594,6 +793,7 @@ class CollectorPool:
     # ── watcher pipeline ──
 
     def _watch_loop(self) -> None:
+        ticks = 0
         try:
             self._reconcile()
         except Exception:
@@ -601,8 +801,13 @@ class CollectorPool:
         while not self._global_stop.is_set():
             if self._global_stop.wait(self._rescan_interval):
                 break
+            ticks += 1
             try:
                 self._reconcile()
+                # Periodic retention: run during the run, not only at the end
+                # (IMP-12: background quota cleanup with an audit trail).
+                if ticks % 12 == 0:
+                    self._quota.enforce_log_retention()
             except Exception:
                 log.exception("watcher reconcile failed")
 
@@ -635,6 +840,7 @@ class CollectorPool:
                         old_pid = self._procs[name].pid
                         self._write_lifecycle("restart", proc, old_pid=old_pid, gap_sec=0.0)
                         self._procs[name] = proc
+                        self._proc_started_monotonic[name] = self._now_sec()
                 else:
                     gap = 0.0
                     event = "new"
@@ -642,6 +848,7 @@ class CollectorPool:
                         gap = max(0.0, self._now_sec() - self._gone_at.pop(name))
                         event = "restart"
                     self._procs[name] = proc
+                    self._proc_started_monotonic[name] = self._now_sec()
                     self._write_lifecycle(event, proc, old_pid=0, gap_sec=gap)
 
     def _write_lifecycle(
@@ -689,6 +896,13 @@ class CollectorPool:
                 level="",
                 raw=line,
             )
+        if entry.device_ts:
+            with self._dispatch_lock:
+                if entry.device_ts not in self._first_host_ts_by_device_ts:
+                    self._first_host_ts_by_device_ts[entry.device_ts] = entry.host_ts
+                    if len(self._first_host_ts_by_device_ts) > 2000:
+                        oldest = next(iter(self._first_host_ts_by_device_ts))
+                        self._first_host_ts_by_device_ts.pop(oldest, None)
         try:
             self._context_buffer.append(entry)
         except Exception:
@@ -703,13 +917,96 @@ class CollectorPool:
         """Dispatch an event recovered from the parser during stop-flush."""
         self._dispatch_inner(event)
 
+    def _record_fault_marker(self, line: str) -> None:
+        """Track `SAT_FAULT_BEGIN` markers so later events carry a fault_id.
+
+        Also consumes the app's self-reported `SAT_RESOURCE_SAMPLE` lines and
+        feeds them to the resource-risk monitor — the only reliable per-app
+        FD/thread source where Android hides `/proc/<pid>` from shell.
+        """
+        m = _FAULT_BEGIN_RE.search(line)
+        if m:
+            proc = m.group("process")
+            with self._procs_lock:
+                if proc:
+                    self._fault_markers[proc] = (m.group("id"), self._now_sec())
+                else:
+                    # Marker without a process: associate with the main package.
+                    self._fault_markers[self._package] = (m.group("id"), self._now_sec())
+            return
+        sp = _START_PROC_RE.search(line)
+        if sp:
+            with self._procs_lock:
+                self._proc_started_monotonic.setdefault(
+                    sp.group("proc"), self._now_sec(),
+                )
+        rm = _RESOURCE_SAMPLE_RE.search(line)
+        if rm and self._resource_monitor is not None:
+            pid = 0
+            lm = LOGCAT_LINE_RE.match(line)
+            if lm:
+                try:
+                    pid = int(lm.group("pid"))
+                except (ValueError, TypeError):
+                    pid = 0
+            from .collectors.resource_risk import ResourceSample
+
+            def _int_or_none(value: Optional[str]) -> Optional[int]:
+                if value is None:
+                    return None
+                try:
+                    return int(value)
+                except ValueError:
+                    return None
+
+            self._resource_monitor.submit_external_sample(
+                ResourceSample(
+                    pid=pid,
+                    ts=self._now_sec(),
+                    fd_count=_int_or_none(rm.group("fd")),
+                    thread_count=_int_or_none(rm.group("threads")),
+                    rss_kb=_int_or_none(rm.group("rss")),
+                    process_start_time="app_self_report",
+                )
+            )
+
+    def _fault_id_for(self, event: StabilityEvent) -> Optional[str]:
+        if event.fault_id:
+            return event.fault_id
+        with self._procs_lock:
+            entry = self._fault_markers.get(event.process)
+        if entry is None:
+            return None
+        fault_id, ts = entry
+        if self._now_sec() - ts > _FAULT_MARKER_TTL_SEC:
+            return None
+        return fault_id
+
+    def _device_epoch(self) -> int:
+        if self._device_monitor is None:
+            return 1
+        return 1 + self._device_monitor.pid_epoch
+
     def _dispatch_inner(self, event: StabilityEvent) -> None:
         event_id = str(uuid.uuid4())
         event.event_id = event_id
         event.run_id = self._run_id
         with self._dispatch_lock:
-            if not self._deduper.observe(event, self._now_sec()):
+            event.fault_id = self._fault_id_for(event)
+            observation = observation_from_event(
+                event,
+                device_epoch=self._device_epoch(),
+                now_iso=self._now_iso(),
+                now_sec=self._now_sec(),
+                run_id=self._run_id,
+            )
+            is_new, occurrence = self._fusion.observe(observation, self._now_sec())
+            if not is_new:
+                # Same physical failure already tracked via another source or
+                # replay; never create a second occurrence.
                 return
+            self._occurrence_by_event_id[event_id] = occurrence
+            self._event_base_by_id[event_id] = base_name_for(event)
             with self._event_counts_lock:
                 cap = self._dumps_cfg.max_incidents_per_type
                 if self._event_counts.get(event.event_type, 0) >= cap:
@@ -741,7 +1038,18 @@ class CollectorPool:
                 error=f"dump queue full (max {self._backpressure.max_queue_size})",
             )
             return
-        task = _DumpTask(event=event, anchor_sec=self._now_sec())
+        anchor_sec = self._now_sec()
+        if event.device_ts:
+            with self._dispatch_lock:
+                anchor_sec = self._first_host_ts_by_device_ts.get(
+                    event.device_ts,
+                    anchor_sec,
+                )
+        task = _DumpTask(
+            event=event,
+            anchor_sec=anchor_sec,
+            deadline=self._now_sec() + float(self._dumps_cfg.dump_shutdown_timeout_sec),
+        )
         with self._task_lock:
             self._tasks.append(task)
             self._pending_dumps += 1
@@ -756,8 +1064,8 @@ class CollectorPool:
             try:
                 # Check cooperative cancellation before starting work.
                 if task.cancelled.is_set():
-                    raise RuntimeError("dump cancelled before start")
-                result = self._run_dump(event, task.anchor_sec)
+                    raise TaskCancelled("dump cancelled before start")
+                result = self._run_dump(event, task.anchor_sec, task)
             except BaseException as exc:
                 # Single terminal state: only write if not already timed_out.
                 with self._task_lock:
@@ -809,6 +1117,8 @@ class CollectorPool:
                     "pid": event.pid,
                     "severity": event.severity,
                     "summary": event.summary[:500],
+                    "source": event.source,
+                    "fault_id": event.fault_id or "",
                 }
             )
         except Exception:
@@ -842,12 +1152,330 @@ class CollectorPool:
         except Exception:
             log.exception("journal terminal append failed (%s)", status)
 
+    # ── workload action windows (spec S1-06 / IMP-08) ──
+
+    def _read_workload_manifest(self) -> Optional[Dict]:
+        if self._incidents_dir is None:
+            return None
+        path = self._incidents_dir.parent / "workload_manifest.json"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return None
+        if self._manifest_cache is not None and self._manifest_cache[0] == mtime:
+            return self._manifest_cache[1]
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        self._manifest_cache = (mtime, manifest)
+        return manifest
+
+    @staticmethod
+    def _iso_epoch(ts: str) -> Optional[float]:
+        try:
+            from datetime import datetime, timezone
+
+            normalized = ts.strip().replace("Z", "+00:00").replace(" ", "T")
+            dt = datetime.fromisoformat(normalized)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except (ValueError, AttributeError):
+            return None
+
+    def _workload_expected_exit(self, event: StabilityEvent) -> bool:
+        """True only when a manifest action declares this fault id AND its
+        expected-exit window covers the event time."""
+        if not event.fault_id:
+            return False
+        manifest = self._read_workload_manifest()
+        actions = (manifest or {}).get("actions") or []
+        event_ts = self._iso_epoch(event.triggered_at)
+        if event_ts is None:
+            return False
+        for action in actions:
+            if action.get("fault_id") != event.fault_id:
+                continue
+            if not action.get("expected_exit"):
+                continue
+            started = self._iso_epoch(action.get("started_at") or "")
+            if started is None:
+                continue
+            window = float(action.get("window_sec") or 0)
+            if window <= 0:
+                window = 120.0  # marker-based actions: generous default window
+            if started - 5.0 <= event_ts <= started + window:
+                return True
+        return False
+
+    # ── ExitInfo fusion (spec S1-03 / IMP-03) ──
+
+    @staticmethod
+    def _exit_info_event_type(rec) -> Optional[str]:
+        reason = getattr(rec, "exit_reason", "")
+        if reason == "anr":
+            return EVENT_ANR
+        if reason == "crashed":
+            desc = (getattr(rec, "description", "") or "").lower()
+            if any(k in desc for k in ("signal", "sigsegv", "sigabrt", "native", "tombstone")):
+                return EVENT_NATIVE_CRASH
+            # The record alone cannot distinguish Java from native: callers
+            # first try to attach to the crash occurrence the time window
+            # already holds; only a truly unmatched record defaults to java.
+            return "crashed_generic"
+        return EVENT_PROCESS_DEATH
+
+    @staticmethod
+    def _exit_taxonomy(rec) -> str:
+        """expected / failure / unknown three-state exit taxonomy (S2-04)."""
+        if getattr(rec, "expected", False):
+            return "expected"
+        if getattr(rec, "exit_reason", "") in (
+            "crashed",
+            "anr",
+            "low_memory",
+            "signaled",
+            "initialization_failure",
+            "dependency_death",
+            "excessive_resource_usage",
+        ):
+            return "failure"
+        return "unknown"
+
+    def _fuse_exit_info(self, records) -> None:
+        """Fuse run-end ExitInfo records into the occurrence model.
+
+        - Records already seen via logcat attach `exit_info` as a supporting
+          source (annotating the incident JSON, cross-source dedup).
+        - Unmatched *failure* records become new incidents so a crash/ANR/LMK
+          that happened during a logcat gap can never produce a false "stable".
+        - Expected exits are audited in the `exit_info` list only.
+        """
+        for rec in records:
+            if getattr(rec, "expected", False):
+                continue
+            event_type = self._exit_info_event_type(rec)
+            obs_type = "process_exit" if event_type == EVENT_PROCESS_DEATH else event_type
+            observation = Observation(
+                source=SOURCE_EXIT_INFO,
+                source_record_id=(f"exit-{getattr(rec, 'pid', 0)}-{getattr(rec, 'timestamp', '')}"),
+                process=getattr(rec, "process", ""),
+                pid=getattr(rec, "pid", 0) or 0,
+                type=obs_type,
+                subtype=getattr(rec, "exit_reason", ""),
+                severity=(
+                    SEVERITY_FATAL
+                    if event_type in (EVENT_JAVA_CRASH, EVENT_NATIVE_CRASH, EVENT_ANR)
+                    else SEVERITY_ERROR
+                ),
+                expected=False,
+                device_event_time=getattr(rec, "timestamp", "") or None,
+                host_received_at=self._now_iso(),
+                host_monotonic_sec=self._now_sec(),
+                device_epoch=self._device_epoch(),
+                confidence=(
+                    CONFIDENCE_HIGH if event_type != EVENT_PROCESS_DEATH else CONFIDENCE_MEDIUM
+                ),
+                extra={
+                    "exit_subreason": getattr(rec, "exit_subreason", "") or "",
+                    "description": getattr(rec, "description", "") or "",
+                    "status": getattr(rec, "status", "") or "",
+                    "importance": getattr(rec, "importance", "") or "",
+                    "pss_kb": getattr(rec, "pss_kb", None),
+                    "rss_kb": getattr(rec, "rss_kb", None),
+                    "raw_reason": getattr(rec, "raw_reason", "") or "",
+                },
+            )
+            if observation.subtype != "crashed" and not getattr(rec, "expected", False):
+                # A non-crash failure record (e.g. excessive_resource_usage
+                # written by the AM for a crash while cached) corroborates a
+                # same-window crash occurrence: attach, never double-count.
+                any_occ = self._fusion.find_any_window_occurrence(observation)
+                if any_occ is not None and any_occ.type in (
+                    EVENT_JAVA_CRASH, EVENT_NATIVE_CRASH, EVENT_ANR,
+                ):
+                    self._annotate_incident_sources(any_occ, "exit_info", rec)
+                    continue
+            if observation.subtype == "crashed":
+                existing = self._fusion.find_compatible(
+                    observation, (EVENT_JAVA_CRASH, EVENT_NATIVE_CRASH),
+                )
+                if existing is not None:
+                    observation = Observation(
+                        source=observation.source,
+                        source_record_id=observation.source_record_id,
+                        process=observation.process,
+                        pid=observation.pid,
+                        type=existing.type,
+                        subtype=observation.subtype,
+                        severity=observation.severity,
+                        expected=False,
+                        device_event_time=observation.device_event_time,
+                        host_monotonic_sec=observation.host_monotonic_sec,
+                        device_epoch=observation.device_epoch,
+                        extra=dict(observation.extra),
+                    )
+                else:
+                    # The AM may have classified this death differently (e.g.
+                    # `excessive_resource_usage` for a crash while cached).
+                    # The record still corroborates the crash: attach it as a
+                    # supporting source instead of fabricating an incident.
+                    any_occ = self._fusion.find_any_window_occurrence(observation)
+                    if any_occ is not None:
+                        self._annotate_incident_sources(any_occ, "exit_info", rec)
+                        continue
+            is_new, occurrence = self._fusion.observe(observation, self._now_sec())
+            if not is_new:
+                self._annotate_incident_sources(occurrence, "exit_info", rec)
+            else:
+                self._create_exit_info_incident(observation, rec)
+
+    def _annotate_incident_sources(self, occurrence: Occurrence, source: str, rec) -> None:
+        """Add a supporting source to the incident JSON of an occurrence."""
+        if self._incidents_dir is None:
+            return
+        event_id = None
+        with self._dispatch_lock:
+            for eid, occ in self._occurrence_by_event_id.items():
+                if occ is occurrence:
+                    event_id = eid
+                    break
+        if event_id is None:
+            return
+        base = self._event_base_by_id.get(event_id)
+        if base is None:
+            return
+        path = self._incidents_dir / f"{base}.json"
+        if not path.exists():
+            return
+        try:
+            incident = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        evidence = incident.setdefault("evidence", {})
+        sources = list(evidence.get("supporting_sources") or [])
+        if source not in sources and evidence.get("source") != source:
+            sources.append(source)
+        evidence["supporting_sources"] = sources
+        for key in (
+            "exit_info_reason",
+            "exit_subreason",
+            "exit_info_description",
+            "exit_info_status",
+            "exit_info_importance",
+            "exit_info_pss_kb",
+            "exit_info_rss_kb",
+            "exit_info_raw_reason",
+        ):
+            evidence.pop(key, None)
+        evidence["exit_info_reason"] = getattr(rec, "exit_reason", "")
+        if getattr(rec, "exit_subreason", ""):
+            evidence["exit_subreason"] = rec.exit_subreason
+        if getattr(rec, "description", ""):
+            evidence["exit_info_description"] = rec.description
+        if getattr(rec, "status", ""):
+            evidence["exit_info_status"] = rec.status
+        if getattr(rec, "importance", ""):
+            evidence["exit_info_importance"] = rec.importance
+        if getattr(rec, "pss_kb", None) is not None:
+            evidence["exit_info_pss_kb"] = rec.pss_kb
+        if getattr(rec, "rss_kb", None) is not None:
+            evidence["exit_info_rss_kb"] = rec.rss_kb
+        if getattr(rec, "raw_reason", ""):
+            evidence["exit_info_raw_reason"] = rec.raw_reason
+        from .atomic_io import atomic_write_json
+
+        try:
+            atomic_write_json(path, incident)
+        except Exception:
+            log.exception("incident source annotation write failed")
+
+    def _create_exit_info_incident(self, observation: Observation, rec) -> None:
+        """Create a full incident for an ExitInfo-only failure (IMP-03)."""
+        event_id = str(uuid.uuid4())
+        event_type = self._exit_info_event_type(rec) or EVENT_PROCESS_DEATH
+        if event_type == "crashed_generic":
+            # No existing crash occurrence in the window: default to java
+            # (most Android crashes are Java) with reduced confidence.
+            event_type = EVENT_JAVA_CRASH
+        event = StabilityEvent(
+            event_type=event_type,
+            process=observation.process,
+            pid=observation.pid,
+            triggered_at=self._now_iso(),
+            severity=observation.severity,
+            summary=(
+                f"exit-info {observation.subtype}"
+                + (
+                    f": {getattr(rec, 'description', '')[:120]}"
+                    if getattr(rec, "description", "")
+                    else ""
+                )
+            ),
+            source=SOURCE_EXIT_INFO,
+            reason=observation.subtype,
+            device_ts=observation.device_event_time,
+            event_id=event_id,
+            run_id=self._run_id,
+        )
+        with self._event_counts_lock:
+            self._event_counts[event.event_type] = self._event_counts.get(event.event_type, 0) + 1
+        self._write_event_row(event)
+        self._journal_detected(event)
+        self._journal_terminal(event_id, STATUS_PERSISTED)
+        self._occurrence_by_event_id[event_id] = self._fusion.occurrences()[-1]
+        if self._incidents_dir is not None:
+            try:
+                from .dumpers import build_incident_dict, write_incident
+
+                evidence_extra = {
+                    "source": SOURCE_EXIT_INFO,
+                    "supporting_sources": [SOURCE_EXIT_INFO],
+                    "exit_info_reason": getattr(rec, "exit_reason", ""),
+                    "exit_taxonomy": self._exit_taxonomy(rec),
+                    "detection_confidence": observation.confidence,
+                    "evidence_completeness": "exit_info_only",
+                }
+                if getattr(rec, "exit_subreason", ""):
+                    evidence_extra["exit_subreason"] = rec.exit_subreason
+                if getattr(rec, "description", ""):
+                    evidence_extra["exit_info_description"] = rec.description
+                if getattr(rec, "status", ""):
+                    evidence_extra["exit_info_status"] = rec.status
+                if getattr(rec, "importance", ""):
+                    evidence_extra["exit_info_importance"] = rec.importance
+                if getattr(rec, "pss_kb", None) is not None:
+                    evidence_extra["exit_info_pss_kb"] = rec.pss_kb
+                if getattr(rec, "rss_kb", None) is not None:
+                    evidence_extra["exit_info_rss_kb"] = rec.rss_kb
+                if getattr(rec, "raw_reason", ""):
+                    evidence_extra["exit_info_raw_reason"] = rec.raw_reason
+                incident = build_incident_dict(
+                    event,
+                    logcat_slice_file=None,
+                    trace_file=None,
+                    fallback_reason="detected via ApplicationExitInfo (logcat missed)",
+                    extra_evidence=evidence_extra,
+                )
+                base = base_name_for(event)
+                write_incident(self._incidents_dir / f"{base}.json", incident)
+            except Exception:
+                log.exception("exit-info incident write failed")
+
     def _attach_context(
         self,
         event: StabilityEvent,
         anchor_sec: float,
+        *,
+        ctx: Optional[TaskContext] = None,
+        staging: Optional[Path] = None,
     ) -> None:
-        """Wait for the post-context window, then snapshot and write the slice."""
+        """Wait for the post-context window, then snapshot and write the slice.
+
+        When `staging` is given the context file is written into the task's
+        staging directory and only becomes visible after publish.
+        """
         pre_sec = self._dumps_cfg.pre_context_sec
         post_sec = self._dumps_cfg.post_context_sec
         deadline = anchor_sec + max(0.0, float(post_sec))
@@ -885,7 +1513,8 @@ class CollectorPool:
             return
         try:
             base = base_name_for(event)
-            path = self._incidents_dir / f"{base}_context.txt"
+            target_dir = staging if staging is not None else self._incidents_dir
+            path = target_dir / f"{base}_context.txt"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
                 format_context_slice(event.raw_lines, slice_),
@@ -895,45 +1524,146 @@ class CollectorPool:
         except Exception:
             log.exception("context slice write failed")
 
-    def _run_dump(self, event: StabilityEvent, anchor_sec: float) -> dict:
-        self._attach_context(event, anchor_sec)
-        if self._incidents_dir is None:
-            return {}
-        if event.event_type == EVENT_JAVA_CRASH:
-            incident = self._java_crash_dump(self._adb, event, self._incidents_dir)
-        elif event.event_type == EVENT_NATIVE_CRASH:
-            incident = self._native_crash_dump(
-                self._adb,
-                event,
-                self._incidents_dir,
-                pull_tombstone=self._dumps_cfg.pull_tombstone,
-            )
-        elif event.event_type == EVENT_ANR:
-            incident = self._anr_dump(
-                self._adb,
-                event,
-                self._incidents_dir,
-                pull_anr_trace=self._dumps_cfg.pull_anr_trace,
-            )
-        elif event.event_type == EVENT_PROCESS_DEATH:
-            incident = self._proc_death_dump(self._adb, event, self._incidents_dir)
-        else:
-            raise ValueError(f"unknown event type: {event.event_type}")
-        self._postprocess_incident(event, incident)
-        return incident
+    def _staging_root(self) -> Path:
+        """Task staging area, *outside* the output dir so late workers can
+        never modify the frozen run directory after `stop()` returns."""
+        import tempfile
+
+        root = Path(tempfile.gettempdir()) / "sat-staging"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def _publish_staging(self, staging: Path) -> None:
+        """Atomically move every staged evidence file into the incident dir.
+
+        Runs only after the task completed within its deadline and was not
+        cancelled, so anything published here is a consistent snapshot.
+        """
+        assert self._incidents_dir is not None
+        self._incidents_dir.mkdir(parents=True, exist_ok=True)
+        for src in sorted(staging.iterdir()):
+            if src.is_file():
+                dst = self._incidents_dir / src.name
+                os.replace(src, dst)
+        try:
+            staging.rmdir()
+        except OSError:
+            pass
+
+    def _cleanup_staging(self, staging: Optional[Path]) -> None:
+        if staging is None or not staging.exists():
+            return
+        import shutil
+
+        try:
+            shutil.rmtree(staging, ignore_errors=True)
+        except Exception:
+            log.exception("staging cleanup failed")
+
+    @staticmethod
+    def _call_dumper(fn, adb, event, incidents_dir, **extra):
+        """Call a dumper, passing only the kwargs it accepts.
+
+        Production dumpers take `ctx`/`staging_dir`; test-injected fakes often
+        keep the legacy `(adb, event, incidents_dir)` signature.
+        """
+        import inspect
+
+        try:
+            params = inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            return fn(adb, event, incidents_dir)
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return fn(adb, event, incidents_dir, **extra)
+        filtered = {k: v for k, v in extra.items() if k in params}
+        return fn(adb, event, incidents_dir, **filtered)
+
+    def _run_dump(self, event: StabilityEvent, anchor_sec: float, task: _DumpTask) -> dict:
+        staging: Optional[Path] = None
+        if self._incidents_dir is not None:
+            staging = self._staging_root() / f"{base_name_for(event)}-{event.event_id}"
+            staging.mkdir(parents=True, exist_ok=True)
+        ctx = TaskContext(
+            deadline=task.deadline,
+            cancelled=task.cancelled,
+            now_fn=self._now_sec,
+        )
+        try:
+            self._attach_context(event, anchor_sec, ctx=ctx, staging=staging)
+            if self._incidents_dir is None:
+                return {}
+            if event.event_type == EVENT_JAVA_CRASH:
+                incident = self._call_dumper(
+                    self._java_crash_dump,
+                    self._adb,
+                    event,
+                    self._incidents_dir,
+                    ctx=ctx,
+                    staging_dir=staging,
+                    fetcher=self._dropbox_fetcher,
+                )
+            elif event.event_type == EVENT_NATIVE_CRASH:
+                incident = self._call_dumper(
+                    self._native_crash_dump,
+                    self._adb,
+                    event,
+                    self._incidents_dir,
+                    pull_tombstone=self._dumps_cfg.pull_tombstone,
+                    ctx=ctx,
+                    staging_dir=staging,
+                    fetcher=self._dropbox_fetcher,
+                )
+            elif event.event_type == EVENT_ANR:
+                incident = self._call_dumper(
+                    self._anr_dump,
+                    self._adb,
+                    event,
+                    self._incidents_dir,
+                    pull_anr_trace=self._dumps_cfg.pull_anr_trace,
+                    ctx=ctx,
+                    staging_dir=staging,
+                    fetcher=self._dropbox_fetcher,
+                )
+            elif event.event_type == EVENT_PROCESS_DEATH:
+                incident = self._call_dumper(
+                    self._proc_death_dump,
+                    self._adb,
+                    event,
+                    self._incidents_dir,
+                    ctx=ctx,
+                    staging_dir=staging,
+                )
+            else:
+                raise ValueError(f"unknown event type: {event.event_type}")
+            self._postprocess_incident(event, incident, staging=staging)
+            # Only publish a task that finished in time and was not cancelled.
+            ctx.check()
+            with self._task_lock:
+                if task._terminal_written:
+                    raise TaskCancelled("terminal state claimed by stop(); staging not published")
+            self._publish_staging(staging)
+            return incident
+        except BaseException:
+            self._cleanup_staging(staging)
+            raise
 
     def _postprocess_incident(
         self,
         event: StabilityEvent,
         incident: dict,
+        *,
+        staging: Optional[Path] = None,
     ) -> None:
-        """Apply diagnosis analyzers and rewrite the incident JSON atomically."""
+        """Apply diagnosis analyzers and rewrite the incident JSON atomically.
+
+        With `staging` set, the JSON is written into the staging directory and
+        becomes visible only after publish.
+        """
         evidence = incident.setdefault("evidence", {})
-        if (
-            event.event_type == EVENT_PROCESS_DEATH
-            and self._incidents_dir is not None
-            and (self._incidents_dir.parent / "workload_manifest.json").exists()
-        ):
+        if event.event_type == EVENT_PROCESS_DEATH and self._workload_expected_exit(event):
+            # Only an action window declaring this fault id as an expected
+            # exit marks the death expected (IMP-08) — never the mere
+            # presence of a workload manifest.
             evidence["workload_expected"] = True
         fingerprint = fingerprint_incident(incident)
         decision = self._sampler.decide(fingerprint)
@@ -945,6 +1675,23 @@ class CollectorPool:
         else:
             evidence["sampled"] = False
 
+        if event.event_type == EVENT_JAVA_CRASH:
+            # S2-01: subtype / crashing thread / startup crash classification.
+            from .analyzers.java_crash import classify_java_crash
+
+            with self._procs_lock:
+                started_mono = self._proc_started_monotonic.get(event.process)
+            classification = classify_java_crash(
+                exception_class=event.exception_class,
+                summary=event.summary,
+                crashing_thread=getattr(event, "crashing_thread", None),
+                process_start_host_sec=started_mono,
+                crash_host_sec=self._now_sec(),
+            )
+            evidence["subtype"] = classification["subtype"]
+            evidence["crashing_thread"] = classification["crashing_thread"]
+            evidence["thread_category"] = classification["thread_category"]
+            evidence["startup_crash"] = classification["startup_crash"]
         if event.event_type == EVENT_JAVA_CRASH and self._diagnosis.mapping_file:
             result = deobfuscate_stack(
                 evidence.get("top_frames", []),
@@ -976,19 +1723,24 @@ class CollectorPool:
         elif event.event_type == EVENT_ANR:
             trace_lines: List[str] = list(event.raw_lines)
             trace_file = evidence.get("trace_file")
-            if trace_file and (self._incidents_dir / trace_file).exists():
+            search_dir = staging if staging is not None else self._incidents_dir
+            if trace_file and search_dir is not None and (search_dir / trace_file).exists():
                 trace_lines = (
-                    (self._incidents_dir / trace_file)
+                    (search_dir / trace_file)
                     .read_text(encoding="utf-8", errors="replace")
                     .splitlines()
                 )
-            evidence["diagnosis"] = analyze_anr_trace(trace_lines)
+            evidence["diagnosis"] = analyze_anr_trace(
+                trace_lines,
+                reason=evidence.get("reason"),
+            )
 
         if self._quota.hard_reached and event.event_type != EVENT_PROCESS_DEATH:
             evidence["disk_quota_skipped"] = True
 
         base = base_name_for(event)
-        path = self._incidents_dir / f"{base}.json"
+        target_dir = staging if staging is not None else self._incidents_dir
+        path = target_dir / f"{base}.json"
         if path.exists():
             from .dumpers import write_incident
 

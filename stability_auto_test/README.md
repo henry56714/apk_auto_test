@@ -9,12 +9,22 @@ Native Crash、ANR、进程异常退出），采集现场证据，输出可审�
 
 - **事件不静默丢失**：每个事件先写入 `incident_journal.jsonl`，再执行证据
   采集；即使 dumper 失败，最终 `report.json` 仍保留占位 Incident 和失败计数。
+- **已确认故障不会被覆盖不足抹掉**：只要观测到 Java/Native Crash 或 ANR，
+  `verdict=unstable` 成立；覆盖不足只降低 `verdict_confidence=partial`，
+  只有“没发现故障但观测不完整”才判 `inconclusive`（三层语义分离）。
+- **跨源融合**：logcat / DropBox / ApplicationExitInfo / 生命周期统一进入
+  Observation→Fusion 层 —— 同一物理故障只计一次，全部来源可追溯
+  （`supporting_sources`）；logcat 断线期间的 Crash/ANR/LMK 由 ExitInfo 补回。
+- **stop() 后产物冻结**：证据先写 staging，任务在 deadline 内成功才原子发布；
+  迟到 worker 无法再写输出目录。
 - **报告单一权威**：`report.json` 是唯一事实来源，HTML / JUnit / 终端摘要均
-  从同一结果模型派生。
-- **观测不完整必须显式**：`collection_health`、`coverage_ratio` 和 `verdict`
-  会让覆盖率不足或采集器不可用的运行被判为 `inconclusive`，而不是“稳定”。
+  从同一结果模型派生；每个运行附带 `capabilities[]`（设备能看见什么、看不见
+  什么以及降级路径）。
+- **默认安全分享**：`sat export` 默认脱敏（allowlist + 全包 canary 扫描），
+  原始导出必须显式 `--raw --acknowledge-sensitive`。
 - **可离线**：`report.html` 内嵌 Plotly JS，无任何 CDN 依赖。
-- **可恢复**：进程被杀后可用 `sat recover --output <dir>` 从 Journal 重建报告。
+- **可恢复 / 可离线复盘**：进程被杀后可用 `sat recover --output <dir>` 重建
+  报告；没有设备时可用 `sat analyze-bugreport <zip>` 解析 bugreport 归档。
 
 ## 安装
 
@@ -41,7 +51,18 @@ python -m sat --package com.android.settings --duration 30s \
 
 # 3. 查看报告（离线可打开）
 open /tmp/sat-smoke/report.html
+
+# 4.（可选）确定性故障复现：安装 Fault Lab 后触发
+adb install -r -t ../test_apps/stability_fault_lab/app/build/outputs/apk/debug/app-debug.apk
+adb shell am broadcast -n com.example.stabilityfaultlab/.FaultReceiver \
+  -a com.example.stabilityfaultlab.TRIGGER --es fault JAVA_MAIN_CRASH \
+  --es fault_id java-main-001
 ```
+
+Fault Lab（`test_apps/stability_fault_lab/`）是仓库自带的故障注入 APK，
+包含 Java/Native Crash、ANR、OOM、FD/线程泄漏、self-exit、敏感日志等
+30+ 种确定性故障；每个 action 输出 `SAT_FAULT_BEGIN id=<id> type=<type>`
+marker，供 fusion / action window / replay 关联。详见其 README。
 
 ## CLI 参数
 

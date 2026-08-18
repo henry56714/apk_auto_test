@@ -96,12 +96,13 @@ class Adb:
                         cmd,
                         capture_output=True,
                         text=True,
+                        # Binary payloads (protobuf tombstones, logcat with
+                        # embedded binary banners) must never crash decoding.
+                        errors="replace",
                         timeout=timeout_v,
                     )
                 except subprocess.TimeoutExpired:
-                    last_exc = AdbTimeout(
-                        f"adb timed out after {timeout_v}s: {' '.join(cmd)}"
-                    )
+                    last_exc = AdbTimeout(f"adb timed out after {timeout_v}s: {' '.join(cmd)}")
                 except FileNotFoundError as e:
                     raise AdbNotFound(f"adb not found at: {self.adb_path}") from e
                 else:
@@ -114,15 +115,16 @@ class Adb:
                     if result.returncode == 0 or not check:
                         return result
                     err = (result.stderr or result.stdout or "").strip()
-                    last_exc = AdbError(
-                        f"adb failed (rc={result.returncode}): {err[:200]}"
-                    )
+                    last_exc = AdbError(f"adb failed (rc={result.returncode}): {err[:200]}")
 
             if attempt < retries_v:
-                backoff = DEFAULT_BACKOFF_BASE * (2 ** attempt)
+                backoff = DEFAULT_BACKOFF_BASE * (2**attempt)
                 log.warning(
                     "adb attempt %d/%d failed (%s); retrying in %.1fs",
-                    attempt + 1, retries_v + 1, last_exc, backoff,
+                    attempt + 1,
+                    retries_v + 1,
+                    last_exc,
+                    backoff,
                 )
                 time.sleep(backoff)
 

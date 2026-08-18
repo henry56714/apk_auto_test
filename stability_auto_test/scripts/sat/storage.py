@@ -20,13 +20,26 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
 EVENTS_COLUMNS: Sequence[str] = (
-    "timestamp", "event_id", "run_id", "event_type", "process_name", "pid",
-    "severity", "summary",
+    "timestamp",
+    "event_id",
+    "run_id",
+    "event_type",
+    "process_name",
+    "pid",
+    "severity",
+    "summary",
+    "source",
+    "fault_id",
 )
-EVENTS_SCHEMA_TAG = "stability_auto_test/events/v3"
+EVENTS_SCHEMA_TAG = "stability_auto_test/events/v4"
 
 LIFECYCLE_COLUMNS: Sequence[str] = (
-    "timestamp", "process_name", "event", "old_pid", "new_pid", "gap_sec",
+    "timestamp",
+    "process_name",
+    "event",
+    "old_pid",
+    "new_pid",
+    "gap_sec",
 )
 LIFECYCLE_SCHEMA_TAG = "stability_auto_test/lifecycle/v1"
 
@@ -126,8 +139,7 @@ class CsvStreamWriter(_RotatingWriterBase):
         flush_every: int = 50,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
-        super().__init__(output_dir, name_prefix, "csv",
-                         flush_every=flush_every, clock=clock)
+        super().__init__(output_dir, name_prefix, "csv", flush_every=flush_every, clock=clock)
         self.columns: List[str] = list(columns)
         self.schema_tag = schema_tag
         self._writer: Optional[csv.DictWriter] = None
@@ -135,8 +147,7 @@ class CsvStreamWriter(_RotatingWriterBase):
     def _on_new_file(self) -> None:
         assert self._fh is not None
         self._fh.write(f"# {self.schema_tag}\n")
-        self._writer = csv.DictWriter(self._fh, fieldnames=self.columns,
-                                      extrasaction="ignore")
+        self._writer = csv.DictWriter(self._fh, fieldnames=self.columns, extrasaction="ignore")
         self._writer.writeheader()
         self._fh.flush()
 
@@ -145,8 +156,7 @@ class CsvStreamWriter(_RotatingWriterBase):
         if self._writer is None:
             # Re-attached to an existing file: rebuild a writer without
             # rewriting the header.
-            self._writer = csv.DictWriter(self._fh, fieldnames=self.columns,
-                                          extrasaction="ignore")
+            self._writer = csv.DictWriter(self._fh, fieldnames=self.columns, extrasaction="ignore")
 
     def _close_locked(self) -> None:
         super()._close_locked()
@@ -170,6 +180,10 @@ class LogStreamWriter(_RotatingWriterBase):
     Each `write_line` appends one `\\n`-terminated line to the current hour
     file. A fresh file starts with `# <schema_tag>\\n` so consumers can
     distinguish a stability_auto_test logcat dump from any other text file.
+
+    With `max_file_bytes` set, the writer also rotates by *size* inside the
+    same hour (IMP-12 / T-L1-012): no file ever exceeds the limit by more
+    than a single line.
     """
 
     def __init__(
@@ -179,16 +193,27 @@ class LogStreamWriter(_RotatingWriterBase):
         name_prefix: str = LOGCAT_PREFIX,
         schema_tag: str = LOGCAT_SCHEMA_TAG,
         flush_every: int = 200,
+        max_file_bytes: Optional[int] = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
-        super().__init__(output_dir, name_prefix, "log",
-                         flush_every=flush_every, clock=clock)
+        super().__init__(output_dir, name_prefix, "log", flush_every=flush_every, clock=clock)
         self.schema_tag = schema_tag
+        self.max_file_bytes = max_file_bytes
 
     def _on_new_file(self) -> None:
         assert self._fh is not None
         self._fh.write(f"# {self.schema_tag}\n")
         self._fh.flush()
+
+    def _rotate_locked(self) -> None:
+        """Close the current file and open the next size-segment."""
+        hour = self._current_key or _current_hour_key(self._clock())
+        self._close_locked()
+        existing = len(list(self.output_dir.glob(f"{self.name_prefix}_{hour}*.{self.suffix}")))
+        path = self.output_dir / f"{self.name_prefix}_{hour}.{existing:03d}.{self.suffix}"
+        self._fh = open(path, "a", encoding="utf-8")
+        self._on_new_file()
+        self._current_key = hour
 
     def write_line(self, line: str) -> None:
         now = self._clock()
@@ -197,6 +222,12 @@ class LogStreamWriter(_RotatingWriterBase):
         with self._lock:
             self._ensure_open(now)
             assert self._fh is not None
+            if (
+                self.max_file_bytes
+                and self._fh.tell() + len(line.encode("utf-8")) > self.max_file_bytes
+                and self._fh.tell() > 0
+            ):
+                self._rotate_locked()
             self._fh.write(line)
             self._rows_since_flush += 1
             if self._rows_since_flush >= self.flush_every:

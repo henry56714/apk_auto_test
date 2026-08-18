@@ -25,11 +25,66 @@ _FRAME_RE = re.compile(
 )
 
 
-def _find_so(symbols_dir: Path, module_name: str) -> Optional[Path]:
+def _read_build_id(so_path: Path) -> Optional[str]:
+    """Best-effort build-id: `llvm-readelf -n` when available, else the
+    `<so>.build-id` sidecar written by the Fault Lab build."""
+    sidecar = Path(str(so_path) + ".build-id")
+    if sidecar.exists():
+        try:
+            return sidecar.read_text(encoding="utf-8").strip().lower()
+        except OSError:
+            pass
+    for tool in ("llvm-readelf", "readelf"):
+        try:
+            proc = subprocess.run(
+                [tool, "-n", str(so_path)],
+                capture_output=True,
+                text=True,
+                timeout=15.0,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if proc.returncode != 0:
+            continue
+        for line in proc.stdout.splitlines():
+            if "Build ID" in line:
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    return parts[-1].strip().lower()
+    return None
+
+
+def _find_so(
+    symbols_dir: Path,
+    module_name: str,
+    *,
+    abi: Optional[str] = None,
+    build_id: Optional[str] = None,
+) -> Optional[Path]:
+    """Match a symbol file by module name + ABI + build ID (IMP-04 / T-L0-012).
+
+    With several same-named `.so` files (arm64/x86 copies), only the one whose
+    ABI and/or build ID match is selected; no evidence → no match.
+    """
     if not symbols_dir.exists():
         return None
     candidates = list(symbols_dir.rglob(module_name))
-    return candidates[0] if candidates else None
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    scored: List[tuple] = []
+    for cand in candidates:
+        score = 0
+        if abi and abi in str(cand):
+            score += 2
+        if build_id:
+            bid = _read_build_id(cand)
+            if bid and bid == build_id.lower():
+                score += 10
+        scored.append((score, cand))
+    scored.sort(key=lambda item: -item[0])
+    return scored[0][1] if scored[0][0] > 0 else None
 
 
 def _run_symbolizer(
@@ -67,6 +122,8 @@ def symbolize_frames(
     *,
     symbols_dir: Optional[Path] = None,
     llvm_symbolizer: Optional[str] = None,
+    abi: Optional[str] = None,
+    build_id: Optional[str] = None,
 ) -> SymbolizeResult:
     if not frames:
         return SymbolizeResult([], "unavailable", "no frames")
@@ -84,7 +141,12 @@ def symbolize_frames(
             out.append(frame)
             failures += 1
             continue
-        so_path = _find_so(Path(symbols_dir), Path(m.group("module")).name)
+        so_path = _find_so(
+            Path(symbols_dir),
+            Path(m.group("module")).name,
+            abi=abi,
+            build_id=build_id,
+        )
         if so_path is None:
             failures += 1
             out.append(frame)

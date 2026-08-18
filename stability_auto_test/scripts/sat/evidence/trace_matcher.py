@@ -26,6 +26,34 @@ MATCH_THRESHOLD = 70
 TIME_WINDOW_SEC = 60.0
 NEW_FILE_SKEW_SEC = 5.0
 
+_TZ_OFFSET_RE = re.compile(r"^([+-])(\d{2})(\d{2})$")
+
+
+def query_device_tz_offset_minutes(adb: Adb) -> Optional[int]:
+    """Device timezone offset from `date +%z` (e.g. `+0800` → 480).
+
+    Android `ls -ln` timestamps are in the *device local* timezone, so they
+    must be converted before comparing against host-UTC event times (IMP-05).
+    """
+    try:
+        r = adb.shell("date +%z", check=False, timeout=5.0)
+    except AdbError:
+        return None
+    if r.returncode != 0:
+        return None
+    m = _TZ_OFFSET_RE.match(r.stdout.strip())
+    if not m:
+        return None
+    minutes = int(m.group(2)) * 60 + int(m.group(3))
+    return -minutes if m.group(1) == "-" else minutes
+
+
+def apply_tz_offset(naive_utc_ts: float, offset_minutes: Optional[int]) -> float:
+    """Convert a device-local timestamp parsed as UTC into real UTC epoch."""
+    if offset_minutes is None:
+        return naive_utc_ts
+    return naive_utc_ts - offset_minutes * 60.0
+
 
 @dataclass
 class TraceCandidate:
@@ -55,7 +83,8 @@ def _parse_mtime(raw_date: str, raw_time: str, year: int) -> Optional[float]:
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
             ts = datetime.strptime(
-                f"{date_part} {raw_time}", fmt,
+                f"{date_part} {raw_time}",
+                fmt,
             ).replace(tzinfo=timezone.utc)
             return ts.timestamp()
         except ValueError:
@@ -63,8 +92,16 @@ def _parse_mtime(raw_date: str, raw_time: str, year: int) -> Optional[float]:
     return None
 
 
-def parse_ls_listing(text: str, year: int) -> List[TraceCandidate]:
-    """Parse `ls -ln` output (toybox Android format)."""
+def parse_ls_listing(
+    text: str,
+    year: int,
+    tz_offset_minutes: Optional[int] = None,
+) -> List[TraceCandidate]:
+    """Parse `ls -ln` output (toybox Android format).
+
+    Device file times are in the device's local timezone; `tz_offset_minutes`
+    converts them to real UTC epoch before scoring (IMP-05).
+    """
     out: List[TraceCandidate] = []
     for raw in text.splitlines():
         line = raw.rstrip()
@@ -80,12 +117,16 @@ def parse_ls_listing(text: str, year: int) -> List[TraceCandidate]:
             continue
         name = parts[-1]
         mtime = _parse_mtime(parts[5], parts[6], year)
-        out.append(TraceCandidate(
-            name=name,
-            path=name,  # callers fix the directory
-            size=size,
-            mtime=mtime,
-        ))
+        if mtime is not None:
+            mtime = apply_tz_offset(mtime, tz_offset_minutes)
+        out.append(
+            TraceCandidate(
+                name=name,
+                path=name,  # callers fix the directory
+                size=size,
+                mtime=mtime,
+            )
+        )
     return out
 
 
@@ -111,18 +152,20 @@ def list_trace_candidates(
     *,
     event: StabilityEvent,
     year: int,
+    timeout: float = 5.0,
+    tz_offset_minutes: Optional[int] = None,
 ) -> List[TraceCandidate]:
     """List candidate files and best-effort parse their headers."""
     try:
-        r = adb.shell(f"ls -ln {remote_dir} 2>/dev/null", check=False, timeout=5.0)
+        r = adb.shell(f"ls -ln {remote_dir} 2>/dev/null", check=False, timeout=timeout)
     except AdbError:
         return []
     if r.returncode != 0:
         return []
-    candidates = parse_ls_listing(r.stdout, year)
+    candidates = parse_ls_listing(r.stdout, year, tz_offset_minutes)
     for cand in candidates:
         cand.path = f"{remote_dir.rstrip('/')}/{cand.name}"
-        header = _read_header(adb, cand.path)
+        header = _read_header(adb, cand.path, timeout=timeout)
         if header:
             pid, process = _parse_pid_process(header)
             cand.pid = pid
@@ -130,12 +173,12 @@ def list_trace_candidates(
     return candidates
 
 
-def _read_header(adb: Adb, path: str) -> str:
+def _read_header(adb: Adb, path: str, timeout: float = 5.0) -> str:
     try:
         r = adb.shell(
             f"head -n 20 {path} 2>/dev/null",
             check=False,
-            timeout=5.0,
+            timeout=timeout,
         )
     except AdbError:
         return ""
@@ -186,12 +229,27 @@ def match_trace(
     *,
     year: Optional[int] = None,
     threshold: int = MATCH_THRESHOLD,
+    timeout: float = 5.0,
+    tz_offset_minutes: Optional[int] = None,
 ) -> TraceMatchResult:
-    """Score candidates and return the best match (if any)."""
+    """Score candidates and return the best match (if any).
+
+    `timeout` bounds each ADB step; dumpers pass the task's remaining deadline
+    budget so trace matching can never exceed the shared task deadline.
+    `tz_offset_minutes` converts device-local file times to UTC; when None the
+    device is queried once via `date +%z` (IMP-05).
+    """
     if year is None:
         year = _event_year(event) or datetime.now(timezone.utc).year
+    if tz_offset_minutes is None:
+        tz_offset_minutes = query_device_tz_offset_minutes(adb)
     candidates = list_trace_candidates(
-        adb, remote_dir, event=event, year=year,
+        adb,
+        remote_dir,
+        event=event,
+        year=year,
+        timeout=timeout,
+        tz_offset_minutes=tz_offset_minutes,
     )
     if not candidates:
         return TraceMatchResult(None, 0, "none", ["no candidates or permission denied"])
@@ -207,13 +265,19 @@ def match_trace(
 
     if best is None or best_score < threshold:
         return TraceMatchResult(
-            best, max(0, best_score), "low",
+            best,
+            max(0, best_score),
+            "low",
             best_reasons + ["no_confident_match"],
             threshold=threshold,
         )
     confidence = "high" if best_score >= 80 else "medium"
     return TraceMatchResult(
-        best, best_score, confidence, best_reasons, threshold=threshold,
+        best,
+        best_score,
+        confidence,
+        best_reasons,
+        threshold=threshold,
     )
 
 
@@ -233,7 +297,8 @@ def verify_local_trace(
     """Re-parse the pulled file header and verify PID + process."""
     try:
         header = Path(local_path).read_text(
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
         )[:4000]
     except OSError:
         return False, "unreadable local trace"
