@@ -1,4 +1,4 @@
-package com.example.stabilityfaultlab
+package com.example.faultlab
 
 import android.app.Activity
 import android.graphics.Color
@@ -16,7 +16,7 @@ class MainActivity : Activity() {
         val text = TextView(this)
         text.setBackgroundColor(Color.WHITE)
         text.setTextColor(Color.BLACK)
-        text.text = "Stability Fault Lab READY\nfaults are triggered via broadcast"
+        text.text = "Fault Lab READY\nfaults are triggered via broadcast"
         text.textSize = 18f
         text.setPadding(64, 128, 64, 64)
         setContentView(text)

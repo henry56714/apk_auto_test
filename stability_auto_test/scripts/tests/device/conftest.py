@@ -18,7 +18,7 @@ from typing import List, Optional
 
 import pytest
 
-FAULT_PKG = "com.example.stabilityfaultlab"
+FAULT_PKG = "com.example.faultlab"
 FAULT_RECEIVER = f"{FAULT_PKG}/.FaultReceiver"
 TRIGGER_ACTION = f"{FAULT_PKG}.TRIGGER"
 RESET_ACTION = f"{FAULT_PKG}.RESET"
@@ -35,7 +35,7 @@ def pytest_addoption(parser):
         "--fault-apk",
         action="store",
         default=None,
-        help="Path to the Stability Fault Lab debug APK",
+        help="Path to the Fault Lab debug APK",
     )
 
 

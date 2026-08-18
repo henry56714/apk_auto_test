@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "stability_fault_lab"
+rootProject.name = "fault_lab"
 include(":app")

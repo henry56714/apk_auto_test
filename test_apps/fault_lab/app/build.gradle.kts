@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.stabilityfaultlab"
+    namespace = "com.example.faultlab"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.stabilityfaultlab"
+        applicationId = "com.example.faultlab"
         minSdk = 23
         targetSdk = 35
         versionCode = 1

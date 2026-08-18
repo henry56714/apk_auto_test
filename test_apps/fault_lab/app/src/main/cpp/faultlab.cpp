@@ -1,4 +1,4 @@
-// Stability Fault Lab native faults (TEST ONLY).
+// Fault Lab native faults (TEST ONLY).
 #include <jni.h>
 #include <android/log.h>
 #include <cstdint>
@@ -33,7 +33,7 @@ __attribute__((noinline)) int deep_recursion(int depth) {
 }  // namespace
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_stabilityfaultlab_NativeLib_trigger(
+Java_com_example_faultlab_NativeLib_trigger(
     JNIEnv* env, jobject /*thiz*/, jstring jfault, jstring jfaultId) {
     const char* fault = env->GetStringUTFChars(jfault, nullptr);
     mark(env, fault, jfaultId);
@@ -66,7 +66,7 @@ Java_com_example_stabilityfaultlab_NativeLib_trigger(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_stabilityfaultlab_NativeLib_nativeHeapLeak(
+Java_com_example_faultlab_NativeLib_nativeHeapLeak(
     JNIEnv* /*env*/, jobject /*thiz*/, jint blocks, jint blockBytes) {
     for (int i = 0; i < blocks; ++i) {
         g_leaked_blocks.push_back(malloc(blockBytes));

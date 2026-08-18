@@ -1,4 +1,4 @@
-package com.example.stabilityfaultlab
+package com.example.faultlab
 
 import android.app.AlarmManager
 import android.content.Context
@@ -204,7 +204,7 @@ object FaultRunner {
             "SENSITIVE_LOG" -> {
                 mark(faultId, fault)
                 Log.i(TAG, "canary email=alice@example.com token=sk-secret-123 " +
-                        "location=31.2304,121.4737 path=/data/user/0/com.example.stabilityfaultlab")
+                        "location=31.2304,121.4737 path=/data/user/0/com.example.faultlab")
                 end(faultId)
             }
             "LOG_STORM" -> {

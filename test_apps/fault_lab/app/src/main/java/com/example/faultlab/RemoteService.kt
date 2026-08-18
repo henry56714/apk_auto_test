@@ -1,4 +1,4 @@
-package com.example.stabilityfaultlab
+package com.example.faultlab
 
 import android.app.Service
 import android.content.Intent
@@ -54,7 +54,7 @@ class RemoteService : Service() {
                 )
             )
             val notification = android.app.Notification.Builder(this, channelId)
-                .setContentTitle("Stability Fault Lab")
+                .setContentTitle("Fault Lab")
                 .setContentText("fault running in :remote")
                 .setSmallIcon(android.R.drawable.stat_sys_warning)
                 .build()

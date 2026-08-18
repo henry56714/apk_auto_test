@@ -1,4 +1,4 @@
-package com.example.stabilityfaultlab
+package com.example.faultlab
 
 /** JNI facade for the native fault library. */
 object NativeLib {

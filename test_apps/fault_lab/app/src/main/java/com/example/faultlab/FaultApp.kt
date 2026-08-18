@@ -1,4 +1,4 @@
-package com.example.stabilityfaultlab
+package com.example.faultlab
 
 import android.app.Application
 import android.util.Log

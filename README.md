@@ -11,7 +11,7 @@ Two independent Python + adb tools that automate Android APK testing — no app 
 
 Both tools are **package-agnostic** (supply a package name, they find all processes), **non-invasive** (pure adb, nothing installed on device), and **long-run stable** (hourly rolling files, adb reconnect with backoff, tested at 1 h–24 h).
 
-The repo-root `test_apps/` folder holds the **shared self-test APK for both tools** — [Stability Fault Lab](test_apps/stability_fault_lab/README.md), a fault-injection app (Java/Native crashes, ANR, OOM, FD/thread leaks, self-exit) with 30+ deterministic faults triggered over adb broadcast. It powers stability's L2 device suite and is available for perf self-tests too.
+The repo-root `test_apps/` folder holds the **shared self-test APK for both tools** — [Fault Lab](test_apps/fault_lab/README.md), a fault-injection app (Java/Native crashes, ANR, OOM, FD/thread leaks, self-exit) with 30+ deterministic faults triggered over adb broadcast. It powers stability's L2 device suite and is available for perf self-tests too. Only this one app lives in `test_apps/` — when perf needs its own scenarios (e.g. CPU/memory stress), they are added to this same app, not a second one.
 
 ---
 

@@ -531,3 +531,8 @@
 {"ts": 1787017771.259596, "rss_kb": 266256, "threads": 5, "fds": 20, "queue_depth": 0}
 {"ts": 1787017772.539181, "rss_kb": 266560, "threads": 5, "fds": 20, "queue_depth": 0}
 {"ts": 1787017788.9419498, "rss_kb": 267072, "threads": 5, "fds": 15, "queue_depth": 0}
+{"ts": 1787018522.628552, "rss_kb": 268656, "threads": 5, "fds": 13, "queue_depth": 0}
+{"ts": 1787018533.849626, "rss_kb": 270288, "threads": 5, "fds": 18, "queue_depth": 0}
+{"ts": 1787018537.100736, "rss_kb": 271456, "threads": 5, "fds": 21, "queue_depth": 0}
+{"ts": 1787018538.384598, "rss_kb": 271920, "threads": 5, "fds": 21, "queue_depth": 0}
+{"ts": 1787018555.436647, "rss_kb": 272800, "threads": 6, "fds": 15, "queue_depth": 0}

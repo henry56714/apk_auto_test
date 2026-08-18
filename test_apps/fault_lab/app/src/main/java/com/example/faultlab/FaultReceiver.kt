@@ -1,4 +1,4 @@
-package com.example.stabilityfaultlab
+package com.example.faultlab
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -7,7 +7,7 @@ import android.os.Handler
 import android.os.Looper
 
 /**
- * Receives `am broadcast -n com.example.stabilityfaultlab/.FaultReceiver`
+ * Receives `am broadcast -n com.example.faultlab/.FaultReceiver`
  * with action TRIGGER and extras `fault` (fault id) + `fault_id` (unique
  * marker). Every fault runs on the main looper via `Handler.post` so the
  * receiver itself never blocks (and broadcast ANRs never pollute results).
@@ -43,8 +43,8 @@ class FaultReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val ACTION_TRIGGER = "com.example.stabilityfaultlab.TRIGGER"
-        const val ACTION_RESET = "com.example.stabilityfaultlab.RESET"
+        const val ACTION_TRIGGER = "com.example.faultlab.TRIGGER"
+        const val ACTION_RESET = "com.example.faultlab.RESET"
         const val EXTRA_FAULT = "fault"
         const val EXTRA_FAULT_ID = "fault_id"
     }

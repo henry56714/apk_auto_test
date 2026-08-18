@@ -1,13 +1,13 @@
-# Stability Fault Lab
+# Fault Lab
 
 专用故障注入 APK（仅测试用，会故意崩溃/卡死）。包名
-`com.example.stabilityfaultlab`，Kotlin + C++/CMake，minSdk 23 / target 35，
+`com.example.faultlab`，Kotlin + C++/CMake，minSdk 23 / target 35，
 包含主进程与 `:remote` 进程。**无网络权限，无账号/联系人/位置权限。**
 
 ## 构建
 
 ```bash
-cd test_apps/stability_fault_lab
+cd test_apps/fault_lab
 ANDROID_HOME=$HOME/Library/Android/sdk gradle assembleDebug
 # 产物: app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -15,18 +15,18 @@ ANDROID_HOME=$HOME/Library/Android/sdk gradle assembleDebug
 ## 统一 ADB 接口
 
 ```bash
-FAULT_PKG=com.example.stabilityfaultlab
-FAULT_RECEIVER=com.example.stabilityfaultlab/.FaultReceiver
+FAULT_PKG=com.example.faultlab
+FAULT_RECEIVER=com.example.faultlab/.FaultReceiver
 
 adb install -r -t app-debug.apk
 adb shell am start -W -n "$FAULT_PKG/.MainActivity"
 
 adb shell am broadcast -n "$FAULT_RECEIVER" \
-  -a com.example.stabilityfaultlab.TRIGGER \
+  -a com.example.faultlab.TRIGGER \
   --es fault JAVA_MAIN_CRASH --es fault_id java-main-001
 
 adb shell am broadcast -n "$FAULT_RECEIVER" \
-  -a com.example.stabilityfaultlab.RESET
+  -a com.example.faultlab.RESET
 ```
 
 每个 action 触发前输出稳定 marker：

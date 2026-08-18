@@ -1,4 +1,4 @@
-"""L2 device E2E: Stability Fault Lab on a real emulator (spec §7.4).
+"""L2 device E2E: Fault Lab on a real emulator (spec §7.4).
 
 Every test: own output dir + fault id, real `python -m sat` subprocess, sync
 on SAT_FAULT_BEGIN markers / report state, asserts read from `report.json`.
@@ -346,7 +346,7 @@ def test_multi_process_faults_do_not_cross_contaminate(adb, fault_lab, sat_run):
         "am",
         "start-foreground-service",
         "-n",
-        "com.example.stabilityfaultlab/.RemoteService",
+        "com.example.faultlab/.RemoteService",
         "--es",
         "mode",
         "exit",
@@ -423,7 +423,7 @@ def test_fault_lab_reset_restores_clean_state(adb, fault_lab):
 def _resource_config(tmp_path) -> str:
     cfg = tmp_path / "resource.yaml"
     cfg.write_text(
-        "package: com.example.stabilityfaultlab\n"
+        "package: com.example.faultlab\n"
         "collectors:\n"
         "  resource_risk:\n"
         "    interval_sec: 5\n"
@@ -493,9 +493,9 @@ def test_startup_crash_subtype(adb, fault_lab, sat_run):
         "am",
         "broadcast",
         "-n",
-        "com.example.stabilityfaultlab/.FaultReceiver",
+        "com.example.faultlab/.FaultReceiver",
         "-a",
-        "com.example.stabilityfaultlab.TRIGGER",
+        "com.example.faultlab.TRIGGER",
         "--es",
         "fault",
         "STARTUP_CRASH",
@@ -510,7 +510,7 @@ def test_startup_crash_subtype(adb, fault_lab, sat_run):
         "am",
         "start",
         "-n",
-        "com.example.stabilityfaultlab/.MainActivity",
+        "com.example.faultlab/.MainActivity",
         timeout=30.0,
     )
     run.wait_exit(timeout=180.0)
@@ -521,7 +521,7 @@ def test_startup_crash_subtype(adb, fault_lab, sat_run):
     assert evidence.get("startup_crash") is True, "startup crash not classified"
     assert report["verdict"] == "unstable"
     # Cleanup: the app is crash-looping — pm clear removes the flag.
-    adb.run("shell", "pm", "clear", "com.example.stabilityfaultlab", timeout=60.0)
+    adb.run("shell", "pm", "clear", "com.example.faultlab", timeout=60.0)
     ensure_app_running(adb)
 
 
@@ -562,7 +562,7 @@ def test_external_sigkill_not_lmk(adb, fault_lab, sat_run):
     run = sat_run(duration_sec=40.0)
     run.start()
     run.wait_monitoring()
-    pid = adb.shell("pidof com.example.stabilityfaultlab").stdout.strip().split()[0]
+    pid = adb.shell("pidof com.example.faultlab").stdout.strip().split()[0]
     r = adb.run("shell", "kill", "-9", pid, timeout=15.0)
     if r.returncode != 0:
         # Shell cannot kill another app on this build (capability probe
@@ -605,9 +605,9 @@ def test_crash_loop_grouped(adb, fault_lab, sat_run):
         "am",
         "broadcast",
         "-n",
-        "com.example.stabilityfaultlab/.FaultReceiver",
+        "com.example.faultlab/.FaultReceiver",
         "-a",
-        "com.example.stabilityfaultlab.TRIGGER",
+        "com.example.faultlab.TRIGGER",
         "--es",
         "fault",
         "STARTUP_CRASH",
@@ -622,14 +622,14 @@ def test_crash_loop_grouped(adb, fault_lab, sat_run):
     # so Android does not suppress the next explicit start; each launch is
     # synced on its own crash marker (retried, never blind sleep).
     for i in range(5):
-        adb.run("shell", "am", "force-stop", "com.example.stabilityfaultlab", timeout=15.0)
+        adb.run("shell", "am", "force-stop", "com.example.faultlab", timeout=15.0)
         for attempt in range(3):
             adb.run(
                 "shell",
                 "am",
                 "start",
                 "-n",
-                "com.example.stabilityfaultlab/.MainActivity",
+                "com.example.faultlab/.MainActivity",
                 timeout=30.0,
             )
             deadline = time.monotonic() + 8.0
@@ -655,7 +655,7 @@ def test_crash_loop_grouped(adb, fault_lab, sat_run):
     # The app is crash-looping: its own RESET broadcast can never run
     # (onCreate crashes first). Use the spec's fallback: force-stop +
     # pm clear to remove the startup-crash flag.
-    adb.run("shell", "pm", "clear", "com.example.stabilityfaultlab", timeout=60.0)
+    adb.run("shell", "pm", "clear", "com.example.faultlab", timeout=60.0)
     ensure_app_running(adb)
 
 
@@ -667,7 +667,7 @@ def _reset_second_device(serial: str) -> None:
     startup-crash flag makes every launch crash before onReceive) and AOT
     compile so cold starts are fast on AOSP images."""
     subprocess.run(
-        ["adb", "-s", serial, "shell", "pm", "clear", "com.example.stabilityfaultlab"],
+        ["adb", "-s", serial, "shell", "pm", "clear", "com.example.faultlab"],
         capture_output=True,
         text=True,
         timeout=60.0,
@@ -684,7 +684,7 @@ def _reset_second_device(serial: str) -> None:
             "-m",
             "speed",
             "-f",
-            "com.example.stabilityfaultlab",
+            "com.example.faultlab",
         ],
         capture_output=True,
         text=True,
@@ -708,7 +708,7 @@ def test_two_emulators_parallel_zero_crosstalk(adb, fault_lab, sat_run):
     other = next(s for s in serials if s != adb.serial)
     # Prepare the second device.
     apk = Path(__file__).parents[4] / (
-        "test_apps/stability_fault_lab/app/build/outputs/apk/debug/app-debug.apk"
+        "test_apps/fault_lab/app/build/outputs/apk/debug/app-debug.apk"
     )
     install = subprocess.run(
         ["adb", "-s", other, "install", "-r", "-t", str(apk)],
@@ -749,7 +749,7 @@ def test_two_emulators_parallel_zero_crosstalk(adb, fault_lab, sat_run):
     assert report_b["verdict"] == "unstable"
     # Clean the second device.
     subprocess.run(
-        ["adb", "-s", other, "shell", "am", "force-stop", "com.example.stabilityfaultlab"],
+        ["adb", "-s", other, "shell", "am", "force-stop", "com.example.faultlab"],
         capture_output=True,
         text=True,
         timeout=30.0,
@@ -787,7 +787,7 @@ def test_cross_api_core_faults_on_api33(adb, fault_lab, sat_run):
     # API level must be recorded in the report.
     assert report["run"]["device"]["sdk_int"] == 33
     subprocess.run(
-        ["adb", "-s", other, "shell", "am", "force-stop", "com.example.stabilityfaultlab"],
+        ["adb", "-s", other, "shell", "am", "force-stop", "com.example.faultlab"],
         capture_output=True,
         text=True,
         timeout=30.0,
@@ -810,7 +810,7 @@ def test_crash_storm_pipeline_identity(adb, fault_lab, sat_run):
             "shell",
             "am",
             "force-stop",
-            "com.example.stabilityfaultlab",
+            "com.example.faultlab",
             timeout=15.0,
         )
         fault_id = f"storm-{i:02d}-{uuid.uuid4().hex[:4]}"
@@ -819,9 +819,9 @@ def test_crash_storm_pipeline_identity(adb, fault_lab, sat_run):
             "am",
             "broadcast",
             "-n",
-            "com.example.stabilityfaultlab/.FaultReceiver",
+            "com.example.faultlab/.FaultReceiver",
             "-a",
-            "com.example.stabilityfaultlab.TRIGGER",
+            "com.example.faultlab.TRIGGER",
             "--es",
             "fault",
             "JAVA_MAIN_CRASH",
@@ -865,7 +865,7 @@ def test_disk_fill_app_sandbox(adb, fault_lab, sat_run):
     # RESET deletes the fill dir (async completion marker).
     reset_fault_lab(adb)
     assert adb.shell(
-        "run-as com.example.stabilityfaultlab du -sk files/fill 2>/dev/null || echo gone"
+        "run-as com.example.faultlab du -sk files/fill 2>/dev/null || echo gone"
     ).stdout.strip() in ("gone", "0")
 
 
@@ -892,7 +892,7 @@ def test_sqlite_corruption_detected(adb, fault_lab, sat_run):
 def test_native_heap_leak_raises_rss_risk(adb, fault_lab, sat_run, tmp_path):
     cfg = tmp_path / "rss.yaml"
     cfg.write_text(
-        "package: com.example.stabilityfaultlab\n"
+        "package: com.example.faultlab\n"
         "collectors:\n"
         "  resource_risk:\n"
         "    interval_sec: 5\n"

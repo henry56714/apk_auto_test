@@ -11,7 +11,7 @@
 
 两个工具均**包名无关**（只需提供包名，自动发现所有进程）、**无侵入**（纯 adb，设备上无需安装任何东西）、**长跑稳定**（文件按小时滚动，adb 断线自动重连退避，已验证 1 h–24 h 连续跑测）。
 
-仓库根目录的 `test_apps/` 是**两工具共用的自测 APK**——[Stability Fault Lab](test_apps/stability_fault_lab/README.md)，一个故障注入应用（Java/Native Crash、ANR、OOM、FD/线程泄漏、self-exit 等 30+ 种确定性故障，adb 广播触发）。稳定性 L2 设备套件使用它，性能自测同样可用。
+仓库根目录的 `test_apps/` 是**两工具共用的自测 APK**——[Fault Lab](test_apps/fault_lab/README.md)，一个故障注入应用（Java/Native Crash、ANR、OOM、FD/线程泄漏、self-exit 等 30+ 种确定性故障，adb 广播触发）。稳定性 L2 设备套件使用它，性能自测同样可用。`test_apps/` 下只有这一个 app：perf 后续需要的测试场景（如 CPU/内存压测）会直接加进同一个 app，不新建第二个。
 
 ---
 
