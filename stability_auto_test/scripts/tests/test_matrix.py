@@ -3,7 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from sat.matrix import run_matrix
+from sat import matrix as matrix_module
+from sat.matrix import _sanitize, launch_package_on, run_matrix
 
 
 def _fake_run(rc: int = 0):
@@ -106,3 +107,86 @@ def test_missing_worker_report_still_degrades_aggregate(tmp_path: Path):
     missing = [d for d in agg["devices"] if d["serial"] == "device-2"]
     assert len(missing) == 1
     assert missing[0]["status"] != "ok"
+
+
+def test_serial_is_sanitized_for_output_directory():
+    assert _sanitize("10.0.2.2:5555/device name") == "10.0.2.2_5555_device_name"
+
+
+def test_launch_package_uses_resolved_activity(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if "resolve-activity" in command[-1]:
+            return subprocess.CompletedProcess(command, 0, "com.example.app/.Main\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(matrix_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(matrix_module.time, "sleep", lambda _: None)
+
+    launch_package_on("serial-1", "com.example.app")
+
+    assert len(calls) == 2
+    assert calls[1][0] == [
+        "adb", "-s", "serial-1", "shell", "am", "start", "-n", "com.example.app/.Main",
+    ]
+
+
+def test_launch_package_falls_back_to_monkey(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 1, "", "not found")
+
+    monkeypatch.setattr(matrix_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(matrix_module.time, "sleep", lambda _: None)
+
+    launch_package_on("serial-1", "com.example.app")
+
+    assert calls[-1] == [
+        "adb", "-s", "serial-1", "shell", "monkey", "-p", "com.example.app",
+        "-c", "android.intent.category.LAUNCHER", "1",
+    ]
+
+
+def test_matrix_default_worker_builds_isolated_sat_command(tmp_path: Path, monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(matrix_module.subprocess, "run", fake_run)
+    results = run_matrix(
+        package="com.example.app",
+        devices=["emulator:5554"],
+        output_root=tmp_path,
+        duration_sec=17,
+        extra_args=["--ci"],
+    )
+
+    assert results[0].returncode == 0
+    assert results[0].output_dir == tmp_path / "device_emulator_5554"
+    command, kwargs = calls[0]
+    assert command[1:4] == ["-m", "sat", "--package"]
+    assert command[-1] == "--ci"
+    assert "17s" in command
+    assert kwargs["timeout"] == 3600.0
+
+
+def test_matrix_records_unexpected_worker_exception(tmp_path: Path):
+    def fail(**kwargs):
+        raise RuntimeError("worker exploded")
+
+    result = run_matrix(
+        package="com.example.app",
+        devices=["serial-1"],
+        output_root=tmp_path,
+        duration_sec=1,
+        run_one=fail,
+    )[0]
+    assert result.returncode == 2
+    assert result.timed_out is False
+    assert result.error == "worker exploded"

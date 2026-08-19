@@ -64,7 +64,7 @@ inventory:
       - no:cacheprovider
       - --ignore=tests/device
     parser: pytest_collect
-    expected_count: 377
+    expected_count: 447
     timeout_seconds: 120
 
   - id: device-pytest
@@ -136,6 +136,7 @@ suites:
           - tests/test_native_symbolizer.py
           - tests/test_offline_bugreport.py
           - tests/test_exit_info.py
+          - tests/test_discovery.py
           - tests/test_s1_04.py
           - tests/test_s2_analyzers.py
           - tests/test_s2_native_exit.py
@@ -180,6 +181,7 @@ suites:
           - -p
           - no:cacheprovider
           - tests/test_api.py
+          - tests/test_adb.py
           - tests/test_pool.py
           - tests/test_backpressure.py
           - tests/test_stop_freeze.py
@@ -190,6 +192,8 @@ suites:
           - tests/test_selfmon.py
           - tests/test_quota.py
           - tests/test_atomic_io.py
+          - tests/test_status.py
+          - tests/test_tasks.py
           - tests/test_s1_06.py
         timeout_seconds: 180
 
@@ -208,6 +212,7 @@ suites:
           - no:cacheprovider
           - tests/test_cli.py
           - tests/test_config_validation.py
+          - tests/test_device.py
           - tests/test_profiles.py
           - tests/test_doctor.py
           - tests/test_docs_examples.py
@@ -268,6 +273,7 @@ suites:
           - tests/test_live_api.py
           - tests/test_live_server.py
           - tests/test_matrix.py
+          - tests/test_launch_workload.py
         timeout_seconds: 240
 
   host-full:
@@ -577,11 +583,13 @@ features:
       - stability_auto_test/scripts/sat/api.py
       - stability_auto_test/scripts/sat/cli.py
       - stability_auto_test/scripts/sat/config.py
+      - stability_auto_test/scripts/sat/device.py
       - stability_auto_test/scripts/sat/health.py
       - stability_auto_test/scripts/sat/policy.py
       - stability_auto_test/scripts/tests/test_api.py
       - stability_auto_test/scripts/tests/test_cli.py
       - stability_auto_test/scripts/tests/test_config_validation.py
+      - stability_auto_test/scripts/tests/test_device.py
       - stability_auto_test/scripts/tests/test_health.py
       - stability_auto_test/scripts/tests/test_policy.py
     suites: [baseline, host-interface, host-truth]
@@ -590,11 +598,13 @@ features:
     description: Event detection, collectors, dumpers, traces, and offline parsing.
     paths:
       - stability_auto_test/scripts/sat/detection.py
+      - stability_auto_test/scripts/sat/discovery.py
       - stability_auto_test/scripts/sat/collectors/**
       - stability_auto_test/scripts/sat/dumpers/**
       - stability_auto_test/scripts/sat/evidence/**
       - stability_auto_test/scripts/sat/offline.py
       - stability_auto_test/scripts/tests/test_detection.py
+      - stability_auto_test/scripts/tests/test_discovery.py
       - stability_auto_test/scripts/tests/test_collector_*.py
       - stability_auto_test/scripts/tests/test_dumpers.py
       - stability_auto_test/scripts/tests/test_offline_bugreport.py
@@ -646,15 +656,20 @@ features:
     description: Collector orchestration, task lifecycle, backpressure, stop, and recovery.
     paths:
       - stability_auto_test/scripts/sat/pool.py
+      - stability_auto_test/scripts/sat/adb.py
       - stability_auto_test/scripts/sat/tasks.py
       - stability_auto_test/scripts/sat/backpressure.py
       - stability_auto_test/scripts/sat/recovery.py
       - stability_auto_test/scripts/sat/runlock.py
       - stability_auto_test/scripts/sat/device.py
+      - stability_auto_test/scripts/sat/status.py
+      - stability_auto_test/scripts/tests/test_adb.py
       - stability_auto_test/scripts/tests/test_pool.py
       - stability_auto_test/scripts/tests/test_stop_freeze.py
       - stability_auto_test/scripts/tests/test_backpressure.py
       - stability_auto_test/scripts/tests/test_recovery.py
+      - stability_auto_test/scripts/tests/test_status.py
+      - stability_auto_test/scripts/tests/test_tasks.py
     suites: [host-runtime, host-truth, faultlab-build, device-fusion, device-recovery]
 
   reporting:
@@ -704,6 +719,7 @@ features:
       - stability_auto_test/scripts/sat/webhook.py
       - stability_auto_test/scripts/sat/matrix.py
       - stability_auto_test/scripts/tests/test_external_workload.py
+      - stability_auto_test/scripts/tests/test_launch_workload.py
       - stability_auto_test/scripts/tests/test_plugins.py
       - stability_auto_test/scripts/tests/test_replay.py
       - stability_auto_test/scripts/tests/test_live*.py

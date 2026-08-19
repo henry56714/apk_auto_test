@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import queue
 import time
 
+from sat import live as live_module
 from sat.live import LiveServer
 
 
@@ -103,3 +105,69 @@ def test_status_change_is_broadcast_to_sse_subscriber():
     second = next(gen)
     assert "updated" in second
     gen.close()
+
+
+def test_malformed_mutation_requests_and_unknown_routes_are_rejected(tmp_path):
+    server = LiveServer(output_dir=tmp_path)
+    assert server.handle("/api/stop", method="POST", body=b"{")[0] == 400
+    assert server.handle("/api/bookmark", method="POST", body=b"{")[0] == 400
+    assert server.handle("/api/report")[0] == 404
+    assert server.handle("/missing")[0] == 404
+
+
+def test_broadcast_drops_update_for_slow_subscriber_without_blocking():
+    server = LiveServer(status_query=lambda: {"state": "new"})
+    subscriber = queue.Queue(maxsize=1)
+    subscriber.put_nowait("old")
+    server._subscribers.add(subscriber)
+
+    server._broadcast()
+
+    assert subscriber.get_nowait() == "old"
+
+
+def test_sse_emits_keepalive_after_idle_timeout(monkeypatch):
+    server = LiveServer()
+    stream = server.stream_events()
+    next(stream)
+    subscriber = next(iter(server._subscribers))
+    monkeypatch.setattr(
+        subscriber,
+        "get",
+        lambda timeout: (_ for _ in ()).throw(queue.Empty),
+    )
+    assert next(stream) == ": keepalive\n\n"
+    stream.close()
+
+
+def test_start_and_stop_manage_http_server_lifecycle(monkeypatch):
+    instances = []
+
+    class FakeHttpServer:
+        def __init__(self, address, handler):
+            self.server_address = (address[0], 43210)
+            self.handler = handler
+            self.shutdown_called = False
+            self.close_called = False
+            instances.append(self)
+
+        def serve_forever(self):
+            return None
+
+        def shutdown(self):
+            self.shutdown_called = True
+
+        def server_close(self):
+            self.close_called = True
+
+    monkeypatch.setattr(live_module, "ThreadingHTTPServer", FakeHttpServer)
+    server = LiveServer()
+    assert server.bound_port is None
+
+    server.start()
+    assert server.bound_port == 43210
+    server.stop()
+
+    assert instances[0].shutdown_called is True
+    assert instances[0].close_called is True
+    assert server.bound_port is None
