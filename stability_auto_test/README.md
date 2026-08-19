@@ -179,6 +179,40 @@ reports/run1/
 
 ## 质量门禁
 
+项目测试集合由仓库级 `$project-test` skill 和 `test-plan.yaml` 统一管理。测试集合
+维护与测试执行是两个相互独立的模式：维护模式可以修改测试资产，但不能把维护
+时的自检结果当成产品验收；执行模式只读测试资产和产品代码，并由确定性断言给出
+`PASS`、`FAIL` 或 `STALE`。设备、APK、SDK、环境变量或其他必要依赖缺失时，
+对应测试项和总体结果都必须是 `FAIL`，并保留具体缺失条件，不能按通过处理。
+
+```bash
+# 在仓库根目录执行
+TESTCTL=.agents/skills/project-test/scripts/testctl.py
+PLAN=stability_auto_test/test-plan.yaml
+
+# 校验计划、核对全部已登记测试数量、查看套件与功能
+python "$TESTCTL" --config "$PLAN" validate
+python "$TESTCTL" --config "$PLAN" inventory --check
+python "$TESTCTL" --config "$PLAN" list
+
+# 测试集合维护范围：未指定范围时默认仅针对未提交变更
+python "$TESTCTL" --config "$PLAN" scope
+python "$TESTCTL" --config "$PLAN" scope --feature anr
+python "$TESTCTL" --config "$PLAN" scope --all
+
+# 测试执行：基础静态门禁；功能执行先 dry-run，再提供动态环境参数
+python "$TESTCTL" --config "$PLAN" run baseline
+python "$TESTCTL" --config "$PLAN" run feature:anr --dry-run
+python "$TESTCTL" --config "$PLAN" run feature:anr --var device=<adb-serial> \
+  --var fault_apk=test_apps/fault_lab/app/build/outputs/apk/debug/app-debug.apk
+```
+
+调用 skill 进行“测试集合维护”时，可明确指定整个项目或功能；两者均未指定时，
+skill 会冻结 `git diff HEAD`（含 staged、unstaged 和未忽略的 untracked 文件）作为
+本次维护输入。维护完成不会自动触发执行，代码改动也不会自动触发测试集合维护。
+
+原始门禁命令仍可直接运行：
+
 ```bash
 cd stability_auto_test/scripts
 python -m pytest tests -q

@@ -1,0 +1,717 @@
+schema_version: 1
+
+project:
+  id: stability-auto-test
+  repo_root: ..
+
+execution:
+  default_target: baseline
+  variables:
+    fault_apk: test_apps/fault_lab/app/build/outputs/apk/debug/app-debug.apk
+    wheel_dir: /tmp/stability-auto-test-dist
+
+test_assets:
+  protected_paths:
+    - .agents/skills/project-test/**
+    - stability_auto_test/test-plan.yaml
+    - stability_auto_test/scripts/tests/**/*.py
+    - stability_auto_test/scripts/tests/fixtures/**
+    - test_apps/fault_lab/app/src/**
+    - test_apps/fault_lab/app/build.gradle.kts
+    - test_apps/fault_lab/build.gradle.kts
+    - test_apps/fault_lab/settings.gradle.kts
+    - test_apps/fault_lab/app/proguard-rules.pro
+    - test_apps/fault_lab/README.md
+
+maintenance:
+  editable_paths:
+    - stability_auto_test/test-plan.yaml
+    - stability_auto_test/scripts/tests/**
+    - test_apps/fault_lab/app/src/**
+    - test_apps/fault_lab/app/build.gradle.kts
+    - test_apps/fault_lab/build.gradle.kts
+    - test_apps/fault_lab/settings.gradle.kts
+    - test_apps/fault_lab/app/proguard-rules.pro
+    - test_apps/fault_lab/README.md
+
+requirements:
+  adb:
+    kind: binary
+    value: adb
+  device:
+    kind: variable
+    name: device
+  fault_apk:
+    kind: path_variable
+    name: fault_apk
+  gradle:
+    kind: binary
+    value: gradle
+  android_home:
+    kind: environment
+    name: ANDROID_HOME
+
+inventory:
+  - id: host-pytest
+    cwd: stability_auto_test/scripts
+    argv:
+      - "{python}"
+      - -m
+      - pytest
+      - --collect-only
+      - -q
+      - -p
+      - no:cacheprovider
+      - --ignore=tests/device
+    parser: pytest_collect
+    expected_count: 377
+    timeout_seconds: 120
+
+  - id: device-pytest
+    cwd: stability_auto_test/scripts
+    argv:
+      - "{python}"
+      - -m
+      - pytest
+      - --collect-only
+      - -q
+      - -p
+      - no:cacheprovider
+      - tests/device
+    parser: pytest_collect
+    expected_count: 29
+    explicit_suite: device-full
+    timeout_seconds: 120
+
+suites:
+  lint:
+    kind: static
+    level: L0
+    description: Python static analysis for implementation and tests.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv: ["{python}", -m, ruff, check, sat, tests]
+        timeout_seconds: 120
+
+  core-contract:
+    kind: static
+    level: L0
+    description: Fast core parsing, verdict, consistency, privacy, and config contracts.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - -p
+          - no:cacheprovider
+          - tests/test_config_validation.py
+          - tests/test_detection.py
+          - tests/test_health.py
+          - tests/test_nf_consistency.py
+          - tests/test_nf_privacy.py
+        timeout_seconds: 120
+
+  host-detection:
+    kind: static
+    level: L0-L1
+    description: Logcat, DropBox, trace, crash, ANR, and offline parsing/evidence.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - -p
+          - no:cacheprovider
+          - tests/test_detection.py
+          - tests/test_collector_logcat.py
+          - tests/test_collector_dropbox.py
+          - tests/test_dumpers.py
+          - tests/test_context_buffer.py
+          - tests/test_anr_analysis.py
+          - tests/test_java_retrace.py
+          - tests/test_native_symbolizer.py
+          - tests/test_offline_bugreport.py
+          - tests/test_exit_info.py
+          - tests/test_s1_04.py
+          - tests/test_s2_analyzers.py
+          - tests/test_s2_native_exit.py
+        timeout_seconds: 180
+
+  host-truth:
+    kind: static
+    level: L0-L1
+    description: Observation fusion, exit correlation, grouping, health, and policy truth.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - -p
+          - no:cacheprovider
+          - tests/test_fusion.py
+          - tests/test_exit_correlation.py
+          - tests/test_exit_fusion_pool.py
+          - tests/test_fingerprint.py
+          - tests/test_issue_grouping.py
+          - tests/test_health.py
+          - tests/test_policy.py
+          - tests/test_resource_correlation.py
+          - tests/test_resource_risk.py
+          - tests/test_resource_risk_s2.py
+        timeout_seconds: 240
+
+  host-runtime:
+    kind: static
+    level: L1
+    description: Pool lifecycle, stop/freeze, recovery, quotas, health, and concurrency.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - -p
+          - no:cacheprovider
+          - tests/test_api.py
+          - tests/test_pool.py
+          - tests/test_backpressure.py
+          - tests/test_stop_freeze.py
+          - tests/test_runlock.py
+          - tests/test_recovery.py
+          - tests/test_reboot_recovery.py
+          - tests/test_device_health.py
+          - tests/test_selfmon.py
+          - tests/test_quota.py
+          - tests/test_atomic_io.py
+          - tests/test_s1_06.py
+        timeout_seconds: 180
+
+  host-interface:
+    kind: static
+    level: L0-L1
+    description: CLI, configuration, profiles, doctor, metadata, and documented examples.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - -p
+          - no:cacheprovider
+          - tests/test_cli.py
+          - tests/test_config_validation.py
+          - tests/test_profiles.py
+          - tests/test_doctor.py
+          - tests/test_docs_examples.py
+          - tests/test_metadata.py
+          - tests/test_compare.py
+          - tests/test_s1_05.py
+        timeout_seconds: 180
+
+  host-reporting-security:
+    kind: static
+    level: L0-L1
+    description: Journal, reports, JUnit, exports, redaction, index, trend, and privacy.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - -p
+          - no:cacheprovider
+          - tests/test_journal.py
+          - tests/test_storage.py
+          - tests/test_reporter_result.py
+          - tests/test_reporter_html.py
+          - tests/test_junit_reporter.py
+          - tests/test_github_summary.py
+          - tests/test_aggregate_report.py
+          - tests/test_report_index.py
+          - tests/test_trend_report.py
+          - tests/test_export_bundle.py
+          - tests/test_redaction.py
+          - tests/test_nf_consistency.py
+          - tests/test_nf_privacy.py
+        timeout_seconds: 240
+
+  host-extensions:
+    kind: static
+    level: L0-L1
+    description: Workloads, replay, plugins, notifications, dashboards, and device matrix.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - -p
+          - no:cacheprovider
+          - tests/test_external_workload.py
+          - tests/test_monkey_workload.py
+          - tests/test_workload_runner.py
+          - tests/test_replay.py
+          - tests/test_plugins.py
+          - tests/test_plugin_isolation.py
+          - tests/test_webhook.py
+          - tests/test_notification_rate_limit.py
+          - tests/test_live_api.py
+          - tests/test_live_server.py
+          - tests/test_matrix.py
+        timeout_seconds: 240
+
+  host-full:
+    kind: static
+    level: L0-L1
+    description: All host-side pytest tests; device tests are explicitly excluded.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - tests
+          - -q
+          - -p
+          - no:cacheprovider
+          - --ignore=tests/device
+        timeout_seconds: 300
+
+  packaging:
+    kind: static
+    level: NF
+    description: Build the production wheel without dependencies or isolation.
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pip
+          - wheel
+          - .
+          - --no-deps
+          - --no-build-isolation
+          - --wheel-dir
+          - "{wheel_dir}"
+        timeout_seconds: 300
+
+  faultlab-build:
+    kind: dynamic
+    level: L2-prepare
+    description: Build the deterministic Android Fault Lab test APK.
+    requires: [gradle, android_home]
+    commands:
+      - cwd: test_apps/fault_lab
+        argv: [gradle, assembleDebug]
+        timeout_seconds: 900
+
+  device-smoke:
+    kind: dynamic
+    level: L2
+    description: Fault Lab doctor capability and clean baseline.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_doctor_reports_fault_lab_capabilities
+          - tests/device/test_stability_e2e.py::test_clean_baseline_is_stable
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 900
+        fail_on_skip: true
+
+  device-java:
+    kind: dynamic
+    level: L2
+    description: Java main/background/startup crashes, crash loops, and heap OOM.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_java_main_crash_detected
+          - tests/device/test_stability_e2e.py::test_java_background_crash_detected
+          - tests/device/test_stability_e2e.py::test_startup_crash_subtype
+          - tests/device/test_stability_e2e.py::test_crash_loop_grouped
+          - tests/device/test_stability_e2e.py::test_java_oom_detected_as_heap_oom
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 2400
+        fail_on_skip: true
+
+  device-native:
+    kind: dynamic
+    level: L2
+    description: Native SIGSEGV and SIGABRT capture.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_native_sigsegv_detected
+          - tests/device/test_stability_e2e.py::test_native_sigabrt_detected_with_abort_message
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 1200
+        fail_on_skip: true
+
+  device-anr:
+    kind: dynamic
+    level: L2
+    description: Input, deadlock, and main-thread busy ANR scenarios.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_input_dispatch_anr
+          - tests/device/test_stability_e2e.py::test_main_deadlock_anr
+          - tests/device/test_stability_e2e.py::test_main_busy_anr
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 1800
+        fail_on_skip: true
+
+  device-exit:
+    kind: dynamic
+    level: L2
+    description: Expected self-exit, force-stop, and external SIGKILL classification.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_self_exit_expected_window
+          - tests/device/test_stability_e2e.py::test_external_force_stop_is_expected
+          - tests/device/test_stability_e2e.py::test_external_sigkill_not_lmk
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 1500
+        fail_on_skip: true
+
+  device-fusion:
+    kind: dynamic
+    level: L2
+    description: ExitInfo recovery, source deduplication, process isolation, and storm identity.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_exit_info_recovers_crash_during_logcat_gap
+          - tests/device/test_stability_e2e.py::test_crash_counts_once_across_sources
+          - tests/device/test_stability_e2e.py::test_multi_process_faults_do_not_cross_contaminate
+          - tests/device/test_stability_e2e.py::test_crash_storm_pipeline_identity
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 2400
+        fail_on_skip: true
+
+  device-privacy:
+    kind: dynamic
+    level: L2
+    description: Sensitive canary redaction in exported evidence.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_sensitive_log_canary_not_in_export_zip
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 900
+        fail_on_skip: true
+
+  device-resource:
+    kind: dynamic
+    level: L2
+    description: FD/thread/native heap leaks and app-scoped disk/database failures.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_fd_leak_raises_risk
+          - tests/device/test_stability_e2e.py::test_thread_leak_raises_risk
+          - tests/device/test_stability_e2e.py::test_disk_fill_app_sandbox
+          - tests/device/test_stability_e2e.py::test_sqlite_corruption_detected
+          - tests/device/test_stability_e2e.py::test_native_heap_leak_raises_rss_risk
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 3000
+        fail_on_skip: true
+
+  device-recovery:
+    kind: dynamic
+    level: L2
+    description: Fault Lab reset and guest reboot recovery.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_fault_lab_reset_restores_clean_state
+          - tests/device/test_stability_e2e.py::test_guest_reboot_recovered
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 2400
+        fail_on_skip: true
+
+  device-matrix:
+    kind: dynamic
+    level: L2-L3
+    description: Two-emulator isolation and cross-API compatibility.
+    requires: [adb, device, fault_apk]
+    commands:
+      - cwd: stability_auto_test/scripts
+        argv:
+          - "{python}"
+          - -m
+          - pytest
+          - -q
+          - tests/device/test_stability_e2e.py::test_two_emulators_parallel_zero_crosstalk
+          - tests/device/test_stability_e2e.py::test_cross_api_core_faults_on_api33
+          - --device
+          - "{device}"
+          - --fault-apk
+          - "{fault_apk}"
+        timeout_seconds: 3600
+        fail_on_skip: true
+
+  baseline:
+    kind: composite
+    description: Default fast static gate.
+    includes: [lint, core-contract]
+
+  static-full:
+    kind: composite
+    description: Full host regression and production packaging.
+    includes: [lint, host-full, packaging]
+
+  device-core:
+    kind: composite
+    description: Core single-device dynamic business scenarios.
+    includes:
+      - device-smoke
+      - device-java
+      - device-native
+      - device-anr
+      - device-exit
+      - device-fusion
+      - device-privacy
+
+  device-full:
+    kind: composite
+    description: Every currently implemented Fault Lab E2E scenario.
+    includes:
+      - device-core
+      - device-resource
+      - device-recovery
+      - device-matrix
+
+  release:
+    kind: composite
+    description: Full static, APK build, and complete device acceptance.
+    includes: [static-full, faultlab-build, device-full]
+
+features:
+  core:
+    description: Configuration, CLI, public API, health, and policy contracts.
+    paths:
+      - stability_auto_test/scripts/sat/api.py
+      - stability_auto_test/scripts/sat/cli.py
+      - stability_auto_test/scripts/sat/config.py
+      - stability_auto_test/scripts/sat/health.py
+      - stability_auto_test/scripts/sat/policy.py
+      - stability_auto_test/scripts/tests/test_api.py
+      - stability_auto_test/scripts/tests/test_cli.py
+      - stability_auto_test/scripts/tests/test_config_validation.py
+      - stability_auto_test/scripts/tests/test_health.py
+      - stability_auto_test/scripts/tests/test_policy.py
+    suites: [baseline, host-interface, host-truth]
+
+  detection:
+    description: Event detection, collectors, dumpers, traces, and offline parsing.
+    paths:
+      - stability_auto_test/scripts/sat/detection.py
+      - stability_auto_test/scripts/sat/collectors/**
+      - stability_auto_test/scripts/sat/dumpers/**
+      - stability_auto_test/scripts/sat/evidence/**
+      - stability_auto_test/scripts/sat/offline.py
+      - stability_auto_test/scripts/tests/test_detection.py
+      - stability_auto_test/scripts/tests/test_collector_*.py
+      - stability_auto_test/scripts/tests/test_dumpers.py
+      - stability_auto_test/scripts/tests/test_offline_bugreport.py
+    suites: [host-detection, faultlab-build, device-core]
+
+  java-crash:
+    description: Java crash capture, classification, retrace, and device faults.
+    paths:
+      - stability_auto_test/scripts/sat/analyzers/java_crash.py
+      - stability_auto_test/scripts/sat/analyzers/java_retrace.py
+      - stability_auto_test/scripts/sat/dumpers/java_crash.py
+      - stability_auto_test/scripts/tests/test_java_retrace.py
+      - test_apps/fault_lab/app/src/main/java/com/example/faultlab/FaultRunner.kt
+    suites: [host-detection, host-truth, faultlab-build, device-java]
+
+  native-crash:
+    description: Native crash capture, symbolization, and JNI test faults.
+    paths:
+      - stability_auto_test/scripts/sat/analyzers/native_symbolizer.py
+      - stability_auto_test/scripts/sat/dumpers/native_crash.py
+      - stability_auto_test/scripts/tests/test_native_symbolizer.py
+      - stability_auto_test/scripts/tests/test_s2_native_exit.py
+      - test_apps/fault_lab/app/src/main/cpp/**
+      - test_apps/fault_lab/app/src/main/java/com/example/faultlab/NativeLib.kt
+    suites: [host-detection, host-truth, faultlab-build, device-native]
+
+  anr:
+    description: ANR detection, analysis, trace evidence, and Fault Lab scenarios.
+    paths:
+      - stability_auto_test/scripts/sat/analyzers/anr.py
+      - stability_auto_test/scripts/sat/dumpers/anr.py
+      - stability_auto_test/scripts/sat/evidence/trace_matcher.py
+      - stability_auto_test/scripts/tests/test_anr_analysis.py
+      - test_apps/fault_lab/app/src/main/java/com/example/faultlab/FaultRunner.kt
+    suites: [host-detection, host-truth, faultlab-build, device-anr]
+
+  process-exit:
+    description: ApplicationExitInfo, expected exits, correlation, and recovery.
+    paths:
+      - stability_auto_test/scripts/sat/collectors/exit_info.py
+      - stability_auto_test/scripts/sat/analyzers/exit_correlation.py
+      - stability_auto_test/scripts/sat/fusion.py
+      - stability_auto_test/scripts/tests/test_exit_info.py
+      - stability_auto_test/scripts/tests/test_exit_correlation.py
+      - stability_auto_test/scripts/tests/test_exit_fusion_pool.py
+    suites: [host-detection, host-truth, faultlab-build, device-exit, device-fusion]
+
+  runtime:
+    description: Collector orchestration, task lifecycle, backpressure, stop, and recovery.
+    paths:
+      - stability_auto_test/scripts/sat/pool.py
+      - stability_auto_test/scripts/sat/tasks.py
+      - stability_auto_test/scripts/sat/backpressure.py
+      - stability_auto_test/scripts/sat/recovery.py
+      - stability_auto_test/scripts/sat/runlock.py
+      - stability_auto_test/scripts/sat/device.py
+      - stability_auto_test/scripts/tests/test_pool.py
+      - stability_auto_test/scripts/tests/test_stop_freeze.py
+      - stability_auto_test/scripts/tests/test_backpressure.py
+      - stability_auto_test/scripts/tests/test_recovery.py
+    suites: [host-runtime, host-truth, faultlab-build, device-fusion, device-recovery]
+
+  reporting:
+    description: Journal, JSON/HTML/JUnit reports, grouping, aggregation, and trends.
+    paths:
+      - stability_auto_test/scripts/sat/journal.py
+      - stability_auto_test/scripts/sat/storage.py
+      - stability_auto_test/scripts/sat/reporter/**
+      - stability_auto_test/scripts/sat/aggregate.py
+      - stability_auto_test/scripts/sat/indexer.py
+      - stability_auto_test/scripts/sat/compare.py
+      - stability_auto_test/scripts/schemas/**
+      - stability_auto_test/scripts/tests/test_report*.py
+      - stability_auto_test/scripts/tests/test_junit_reporter.py
+      - stability_auto_test/scripts/tests/test_aggregate_report.py
+    suites: [host-reporting-security, packaging]
+
+  privacy:
+    description: Redaction, export safety, and privacy invariants.
+    paths:
+      - stability_auto_test/scripts/sat/redaction.py
+      - stability_auto_test/scripts/tests/test_redaction.py
+      - stability_auto_test/scripts/tests/test_export_bundle.py
+      - stability_auto_test/scripts/tests/test_nf_privacy.py
+    suites: [host-reporting-security, faultlab-build, device-privacy]
+
+  resources:
+    description: Resource risk, quotas, backpressure, and app-scoped fault injection.
+    paths:
+      - stability_auto_test/scripts/sat/collectors/resource_risk.py
+      - stability_auto_test/scripts/sat/quota.py
+      - stability_auto_test/scripts/sat/selfmon.py
+      - stability_auto_test/scripts/tests/test_resource*.py
+      - stability_auto_test/scripts/tests/test_quota.py
+      - stability_auto_test/scripts/tests/test_selfmon.py
+      - test_apps/fault_lab/app/src/main/java/com/example/faultlab/FaultRunner.kt
+      - test_apps/fault_lab/app/src/main/cpp/faultlab.cpp
+    suites: [host-runtime, host-truth, faultlab-build, device-resource]
+
+  extensions:
+    description: Workloads, plugins, replay, notifications, live UI, and matrix.
+    paths:
+      - stability_auto_test/scripts/sat/workloads/**
+      - stability_auto_test/scripts/sat/plugins/**
+      - stability_auto_test/scripts/sat/replay.py
+      - stability_auto_test/scripts/sat/live.py
+      - stability_auto_test/scripts/sat/webhook.py
+      - stability_auto_test/scripts/sat/matrix.py
+      - stability_auto_test/scripts/tests/test_external_workload.py
+      - stability_auto_test/scripts/tests/test_plugins.py
+      - stability_auto_test/scripts/tests/test_replay.py
+      - stability_auto_test/scripts/tests/test_live*.py
+      - stability_auto_test/scripts/tests/test_matrix.py
+    suites: [host-extensions]
+
+  fault-lab:
+    description: Entire Android test APK and all implemented device scenarios.
+    paths:
+      - test_apps/fault_lab/**
+    suites: [faultlab-build, device-full]
