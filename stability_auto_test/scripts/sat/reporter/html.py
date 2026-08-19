@@ -49,6 +49,72 @@ def _safe_json(obj) -> str:
     )
 
 
+_CONFIG_IDENTITY_KEYS = ("package", "device", "output_dir", "profile_name")
+_CONFIG_IMPORTANT_MODE_KEYS = (
+    "ci_mode",
+    "dashboard",
+    "plugins_enabled",
+    "redact",
+    "replay_of_run_id",
+    "webhook_url",
+)
+_CONFIG_DEFAULT_TRUE_KEYS = (
+    "emit_html",
+    "enable_anr",
+    "enable_java_crash",
+    "enable_native_crash",
+    "enable_process_death",
+    "logcat_enabled",
+    "pull_anr_trace",
+    "pull_tombstone",
+    "resource_risk_enabled",
+    "self_monitor_enabled",
+)
+
+
+def _has_config_display_value(value) -> bool:
+    if value is None or value == "":
+        return False
+    if isinstance(value, (list, tuple, dict)) and not value:
+        return False
+    return True
+
+
+def _compact_config(config: Dict) -> Dict:
+    """Keep report HTML focused on identity and explicit/non-default choices.
+
+    The canonical `report.json` still owns the complete effective config.
+    CLI/profile/YAML resolution records explicitly supplied keys in
+    `config_sources`; important mode changes are retained as a compatibility
+    fallback for older reports that do not carry source metadata.
+    """
+    config = dict(config or {})
+    raw_sources = config.get("config_sources")
+    sources = raw_sources if isinstance(raw_sources, dict) else {}
+    selected = set(_CONFIG_IDENTITY_KEYS)
+    selected.update(str(key) for key in sources)
+    for key in _CONFIG_IMPORTANT_MODE_KEYS:
+        if config.get(key):
+            selected.add(key)
+    for key in _CONFIG_DEFAULT_TRUE_KEYS:
+        if key in config and config[key] is False:
+            selected.add(key)
+
+    values = {
+        key: value
+        for key, value in config.items()
+        if key != "config_sources" and key in selected and _has_config_display_value(value)
+    }
+    visible_sources = {key: sources[key] for key in values if key in sources}
+    total_count = sum(1 for key in config if key != "config_sources")
+    return {
+        "values": values,
+        "sources": visible_sources,
+        "total_count": total_count,
+        "hidden_count": max(0, total_count - len(values)),
+    }
+
+
 def _render_issue_groups(groups) -> str:
     """Server-rendered issue-group summary (default view for repeat bugs)."""
     if not groups:
@@ -713,6 +779,13 @@ _CSS = r"""
   }
   details.acc[open] > summary::after { transform: rotate(-135deg); }
   details.acc > .body { padding: 10px 26px 26px; border-top: 1px solid var(--rule); }
+  .cfg-note {
+    padding: 12px 14px;
+    border-left: 3px solid var(--accent);
+    background: rgba(29,78,216,0.05);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
   .cfg-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 38px; padding-top: 18px; }
   .cfg-group .g-title {
     font-size: var(--fs-xs); color: var(--muted);
@@ -1118,6 +1191,10 @@ _BODY_SKELETON = r"""
         <span class="s-right" id="cfg-count"></span>
       </summary>
       <div class="body">
+        <div class="cfg-note">
+          <span class="zh">仅展示关键标识和显式配置项；使用默认值的配置已隐藏，完整有效配置保留在 report.json。</span>
+          <span class="en">Only identity and explicitly configured values are shown; defaults are hidden. The full effective config remains in report.json.</span>
+        </div>
         <div class="cfg-grid" id="cfg-grid"></div>
       </div>
     </details>
@@ -1161,7 +1238,13 @@ _JS = r"""
   var lifecycle = readJson('lifecycle-data') || [];
   var deviceEvents = readJson('device-events-data') || [];
   var dataFiles = readJson('files-data')     || { events: [], lifecycle: [], logcat: [] };
-  var configEff = readJson('config-data')    || {};
+  var configPayload = readJson('config-data') || {};
+  var configEff = configPayload.values || configPayload;
+  var configMeta = configPayload.values ? configPayload : {
+    total_count: Object.keys(configEff).length,
+    hidden_count: 0,
+    sources: {},
+  };
 
   var run       = report.run || {};
   var processes = report.processes || [];
@@ -2276,15 +2359,17 @@ _JS = r"""
     var grid = document.getElementById('cfg-grid');
     var groups = [
       { title_zh: '基本', title_en: 'Basics',
-        keys: ['package', 'device', 'output_dir', 'wait_timeout_sec', 'rescan_interval_sec', 'process_filter'] },
+        keys: ['package', 'device', 'output_dir', 'profile_name', 'wait_timeout_sec', 'rescan_interval_sec', 'process_filter'] },
       { title_zh: '采集', title_en: 'Collection',
-        keys: ['logcat_enabled', 'logcat_buffers', 'logcat_reconnect_backoff_sec', 'dropbox_enabled', 'dropbox_poll_interval_sec'] },
+        keys: ['logcat_enabled', 'logcat_buffers', 'logcat_reconnect_backoff_sec', 'device_health_interval_sec', 'device_reboot_policy', 'resource_risk_enabled', 'resource_risk_interval_sec', 'self_monitor_enabled', 'self_monitor_interval_sec'] },
       { title_zh: '检测开关', title_en: 'Detectors',
         keys: ['enable_java_crash', 'enable_native_crash', 'enable_anr', 'enable_process_death', 'dedup_window_sec'] },
-      { title_zh: 'Dump', title_en: 'Dump',
-        keys: ['pre_context_sec', 'post_context_sec', 'max_incidents_per_type', 'max_concurrent_dumps', 'pull_tombstone', 'pull_anr_trace'] },
-      { title_zh: '输出', title_en: 'Output',
-        keys: ['emit_html', 'status_interval_sec'] },
+      { title_zh: '证据', title_en: 'Evidence',
+        keys: ['pre_context_sec', 'post_context_sec', 'max_incidents_per_type', 'max_concurrent_dumps', 'pull_tombstone', 'pull_anr_trace', 'mapping_file', 'native_symbols_dir'] },
+      { title_zh: '策略', title_en: 'Policy',
+        keys: ['ci_mode', 'policy_fail_on', 'policy_max_process_death', 'policy_max_anr', 'policy_max_restarts', 'policy_min_uptime_ratio'] },
+      { title_zh: '输出与集成', title_en: 'Output & integration',
+        keys: ['emit_html', 'status_interval_sec', 'dashboard', 'plugins_enabled', 'redact', 'webhook_url', 'replay_of_run_id'] },
     ];
     var presented = {};
     function fmtVal(v) {
@@ -2318,9 +2403,14 @@ _JS = r"""
         rows + '</div>');
     }
     grid.innerHTML = sections.join('');
+    if (sections.length === 0) {
+      grid.innerHTML = '<div class="v-muted">' + tr('无非默认配置。', 'No non-default configuration.') + '</div>';
+    }
+    var shown = Object.keys(configEff).length;
+    var hidden = configMeta.hidden_count || 0;
     document.getElementById('cfg-count').innerHTML =
-      '<span class="zh">' + Object.keys(configEff).length + ' 项</span>' +
-      '<span class="en">' + Object.keys(configEff).length + ' keys</span>';
+      '<span class="zh">显示 ' + shown + ' 项 · 隐藏 ' + hidden + ' 项默认配置</span>' +
+      '<span class="en">' + shown + ' shown · ' + hidden + ' defaults hidden</span>';
   }
 
   // ============ FILES TREE ============
@@ -2544,7 +2634,7 @@ def render(result: Dict) -> str:
     device_events_block = result.get("device_events", []) or []
     lifecycle_block = result.get("lifecycle_events", []) or []
     files_block = result.get("data_files", {}) or {"events": [], "lifecycle": [], "logcat": []}
-    config_block = config_eff
+    config_block = _compact_config(config_eff)
 
     parts = [
         "<!doctype html>",

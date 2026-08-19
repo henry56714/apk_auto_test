@@ -16,6 +16,22 @@ def test_html_render_includes_all_sections(tmp_path: Path):
             "exit_code": 0,
             "exit_reason": "duration_elapsed",
             "device": {"serial": "x", "android_version": "14"},
+            "config_effective": {
+                "package": "com.example.app",
+                "device": "x",
+                "output_dir": "/tmp/report",
+                "wait_timeout_sec": 60.0,
+                "enable_java_crash": True,
+                "pre_context_sec": 45.0,
+                "redaction_regexes": [],
+                "config_sources": {
+                    "package": "cli",
+                    "device": "cli",
+                    "output_dir": "cli",
+                    "pre_context_sec": "yaml",
+                    "redaction_regexes": "cli",
+                },
+            },
         },
         "processes": [
             {
@@ -68,21 +84,7 @@ def test_html_render_includes_all_sections(tmp_path: Path):
                 "started_at": 1700000000.0,
                 "ended_at": 1700000030.0,
                 "detail": "boot_id changed",
-            },
-            {
-                "id": "incident-002",
-                "type": "process_death",
-                "process": "com.example.app",
-                "pid": 1234,
-                "triggered_at": "2026-05-21 10:01:01.000",
-                "severity": "error",
-                "summary": "process disappeared",
-                "evidence": {
-                    "source": "watcher",
-                    "secondary_to_incident_id": "incident-001",
-                    "root_cause_type": "java_crash",
-                },
-            },
+            }
         ],
         "incidents": [
             {
@@ -99,12 +101,34 @@ def test_html_render_includes_all_sections(tmp_path: Path):
                     "top_frames": ["at X.y(X.java:1)"],
                     "source": "logcat",
                 },
-            }
+            },
+            {
+                "id": "incident-002",
+                "type": "process_death",
+                "process": "com.example.app",
+                "pid": 1234,
+                "triggered_at": "2026-05-21 10:01:01.000",
+                "severity": "error",
+                "summary": "process disappeared",
+                "evidence": {
+                    "source": "watcher",
+                    "secondary_to_incident_id": "incident-001",
+                    "root_cause_type": "java_crash",
+                },
+            },
         ],
         "lifecycle_events": [],
         "bookmarks": [{"timestamp": "2026-05-21 10:02:00.000", "label": "b"}],
         "data_files": {"events": [], "lifecycle": [], "logcat": []},
     }
+    compact = html._compact_config(result["run"]["config_effective"])
+    assert compact["values"] == {
+        "package": "com.example.app",
+        "device": "x",
+        "output_dir": "/tmp/report",
+        "pre_context_sec": 45.0,
+    }
+    assert compact["hidden_count"] == 3
     written = html.write(result, tmp_path)
     text = written.read_text()
     assert "Stability report" in text
@@ -116,6 +140,8 @@ def test_html_render_includes_all_sections(tmp_path: Path):
     assert "fd_count grew" in text
     assert "secondary_to_incident_id" in text
     assert "ApplicationExitInfo" in text
+    assert "defaults are hidden" in text
+    assert '"hidden_count": 3' in text
     # Counters block + incident details rendered
     assert "Java crash" in text
     assert "boom" in text
