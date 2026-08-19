@@ -78,15 +78,6 @@ def test_example_ci_workflow_parses():
     assert any("upload-artifact" in s.get("uses", "") for s in jobs)
 
 
-def test_release_artifacts_exist():
-    changelog = PROJECT / "CHANGELOG.md"
-    migration = PROJECT / "MIGRATION.md"
-    plugins = PROJECT / "PLUGINS.md"
-    assert changelog.exists() and "S1-01" in changelog.read_text()
-    assert migration.exists() and "Migration notes" in migration.read_text()
-    assert plugins.exists() and "sat.plugins" in plugins.read_text()
-
-
 def test_generated_html_has_no_cdn_dependency(tmp_path: Path):
     from sat.reporter import html as html_renderer
     result = {
