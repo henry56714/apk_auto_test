@@ -141,6 +141,10 @@ def test_exit_info_only_crash_becomes_incident(tmp_path: Path):
     assert incident["evidence"]["source"] == "exit_info"
     assert incident["evidence"]["exit_info_reason"] == "crashed"
     assert "exit_info" in incident["evidence"]["supporting_sources"]
+    # Soak finding: a late-flushed record must land on the timeline at the
+    # real exit time (device record ts, tz-corrected), not at the poll time.
+    assert incident["triggered_at"] == "2026-08-13 10:00:05.000"
+    assert incident["evidence"]["device_ts"] == "2026-08-13T10:00:05.000"
 
 
 def test_logcat_and_exit_info_count_once(tmp_path: Path):

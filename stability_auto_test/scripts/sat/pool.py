@@ -26,6 +26,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional
 
@@ -151,9 +152,7 @@ _FAULT_BEGIN_RE = re.compile(
 )
 # ActivityManager process start (for startup-crash classification when the
 # process dies before the watcher's first reconcile).
-_START_PROC_RE = re.compile(
-    r"Start proc\s+\d+:(?P<proc>\S+?)(?:/u\d+a?\d*)?\s+for\s+"
-)
+_START_PROC_RE = re.compile(r"Start proc\s+\d+:(?P<proc>\S+?)(?:/u\d+a?\d*)?\s+for\s+")
 # App self-reported resource sample (Fault Lab SAT_RESOURCE_SAMPLE marker).
 _RESOURCE_SAMPLE_RE = re.compile(
     r"SAT_RESOURCE_SAMPLE\s+id=(?P<id>\S+)"
@@ -938,7 +937,8 @@ class CollectorPool:
         if sp:
             with self._procs_lock:
                 self._proc_started_monotonic.setdefault(
-                    sp.group("proc"), self._now_sec(),
+                    sp.group("proc"),
+                    self._now_sec(),
                 )
         rm = _RESOURCE_SAMPLE_RE.search(line)
         if rm and self._resource_monitor is not None:
@@ -1293,13 +1293,16 @@ class CollectorPool:
                 # same-window crash occurrence: attach, never double-count.
                 any_occ = self._fusion.find_any_window_occurrence(observation)
                 if any_occ is not None and any_occ.type in (
-                    EVENT_JAVA_CRASH, EVENT_NATIVE_CRASH, EVENT_ANR,
+                    EVENT_JAVA_CRASH,
+                    EVENT_NATIVE_CRASH,
+                    EVENT_ANR,
                 ):
                     self._annotate_incident_sources(any_occ, "exit_info", rec)
                     continue
             if observation.subtype == "crashed":
                 existing = self._fusion.find_compatible(
-                    observation, (EVENT_JAVA_CRASH, EVENT_NATIVE_CRASH),
+                    observation,
+                    (EVENT_JAVA_CRASH, EVENT_NATIVE_CRASH),
                 )
                 if existing is not None:
                     observation = Observation(
@@ -1391,6 +1394,26 @@ class CollectorPool:
         except Exception:
             log.exception("incident source annotation write failed")
 
+    def _exit_info_triggered_at(self, rec) -> str:
+        """Triggered-at for an ExitInfo-only incident.
+
+        ExitInfo records are written by the framework asynchronously and may
+        be flushed long after the actual exit. `timestamp_epoch` is the
+        device-tz-corrected real UTC epoch of the exit, so it places the
+        incident on the timeline where the exit really happened instead of
+        stacking every late flush at the poll time (soak review finding).
+        Falls back to the observation time when the epoch is unavailable.
+        """
+        ts_epoch = getattr(rec, "timestamp_epoch", None)
+        if ts_epoch is None:
+            return self._now_iso()
+        return (
+            datetime.fromtimestamp(ts_epoch, timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("T", " ")
+            .replace("+00:00", "")
+        )
+
     def _create_exit_info_incident(self, observation: Observation, rec) -> None:
         """Create a full incident for an ExitInfo-only failure (IMP-03)."""
         event_id = str(uuid.uuid4())
@@ -1403,7 +1426,7 @@ class CollectorPool:
             event_type=event_type,
             process=observation.process,
             pid=observation.pid,
-            triggered_at=self._now_iso(),
+            triggered_at=self._exit_info_triggered_at(rec),
             severity=observation.severity,
             summary=(
                 f"exit-info {observation.subtype}"

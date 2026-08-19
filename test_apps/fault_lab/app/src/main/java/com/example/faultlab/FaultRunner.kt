@@ -132,7 +132,13 @@ object FaultRunner {
             "ANR_BROADCAST" -> {
                 mark(faultId, fault)
                 ready(faultId)
-                Thread.sleep(60_000) // receiver-poster runs on main
+                // Broadcast delivery itself never blocks (FaultReceiver posts
+                // to the main looper), so this blocks the MAIN THREAD: the
+                // next input event (tap/key) then times out into an
+                // "Input dispatching timed out" ANR. 70 s keeps the main
+                // thread blocked well past the input-timeout window (soak
+                // review finding: 60 s worked but left no headroom).
+                Thread.sleep(70_000) // receiver-poster runs on main
                 end(faultId)
             }
             "ANR_SERVICE" -> {
