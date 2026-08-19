@@ -37,6 +37,7 @@ log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1.15"
 REPORT_FILENAME = "report.json"
+CRASH_TERMINATION_WINDOW_SEC = 30.0
 
 
 def _iso(ts: Optional[datetime]) -> Optional[str]:
@@ -111,6 +112,87 @@ def _event_counts_for(incidents: List[Dict], process_name: str) -> Dict[str, int
         if t in counts:
             counts[t] += 1
     return counts
+
+
+def _timestamp_epoch(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _correlate_crash_terminations(
+    incidents: List[Dict],
+    *,
+    window_sec: float = CRASH_TERMINATION_WINDOW_SEC,
+) -> Dict[str, Any]:
+    """Link a crash to the process-death observation it caused.
+
+    A Java/native crash and the watcher's subsequent PID disappearance are
+    two useful observations of one root failure. Keep both records for audit
+    and lifecycle analysis, but mark the death as secondary so consumers do
+    not have to count the same root problem twice.
+    """
+    crashes = [inc for inc in incidents if inc.get("type") in ("java_crash", "native_crash")]
+    correlated = 0
+    used_crash_ids = set()
+    for death in incidents:
+        if death.get("type") != "process_death":
+            continue
+        death_evidence = death.setdefault("evidence", {})
+        if death_evidence.get("workload_expected") or death_evidence.get("expected"):
+            continue
+        death_ts = _timestamp_epoch(death.get("triggered_at"))
+        if death_ts is None:
+            continue
+        candidates = []
+        for crash in crashes:
+            if crash.get("id") in used_crash_ids:
+                continue
+            if crash.get("process") != death.get("process"):
+                continue
+            if not crash.get("pid") or crash.get("pid") != death.get("pid"):
+                continue
+            crash_ts = _timestamp_epoch(crash.get("triggered_at"))
+            if crash_ts is None:
+                continue
+            delta = death_ts - crash_ts
+            if 0.0 <= delta <= window_sec:
+                candidates.append((delta, crash))
+        if not candidates:
+            continue
+        delta, crash = min(candidates, key=lambda item: item[0])
+        crash_evidence = crash.setdefault("evidence", {})
+        death_evidence["secondary_to_incident_id"] = crash.get("id")
+        death_evidence["secondary_to_event_id"] = crash.get("event_id")
+        death_evidence["root_cause_type"] = crash.get("type")
+        death_evidence["root_cause_delay_sec"] = round(delta, 3)
+        crash_evidence["termination_incident_id"] = death.get("id")
+        crash_evidence["termination_event_id"] = death.get("event_id")
+        crash_evidence["termination_delay_sec"] = round(delta, 3)
+        used_crash_ids.add(crash.get("id"))
+        correlated += 1
+
+    by_type = {event_type: 0 for event_type in ALL_EVENT_TYPES}
+    for incident in incidents:
+        event_type = incident.get("type")
+        if event_type in by_type:
+            by_type[event_type] += 1
+    return {
+        "record_count": len(incidents),
+        "root_problem_count": sum(
+            1
+            for incident in incidents
+            if not (incident.get("evidence") or {}).get("secondary_to_incident_id")
+        ),
+        "correlated_termination_count": correlated,
+        "by_type": by_type,
+    }
 
 
 def _load_incidents(incidents_dir: Path) -> List[Dict]:
@@ -449,6 +531,7 @@ def build(
             evidence["supporting_sources"] = sources
     exit_records = correlate_exit_info(incidents, list(exit_info or []))
     correlate_resource_risk(incidents, list(resource_risk or []))
+    incident_summary = _correlate_crash_terminations(incidents)
     recovery_warnings = recovery_warnings + incident_warnings
     if journal_records:
         event_pipeline = _journal_counts(journal_records)
@@ -516,7 +599,14 @@ def build(
         },
         "processes": processes,
         "incidents": incidents,
-        "issue_groups": group_incidents(incidents),
+        "incident_summary": incident_summary,
+        "issue_groups": group_incidents(
+            [
+                incident
+                for incident in incidents
+                if not (incident.get("evidence") or {}).get("secondary_to_incident_id")
+            ]
+        ),
         "exit_info": exit_records,
         "device_events": list(device_events or []),
         "resource_risk": list(resource_risk or []),

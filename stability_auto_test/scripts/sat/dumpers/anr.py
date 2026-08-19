@@ -8,6 +8,7 @@ on user builds). On failure, records `fallback_reason` and continues.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -23,6 +24,32 @@ from . import (
 )
 
 log = logging.getLogger(__name__)
+
+_DROPBOX_DATA_FILE_RE = re.compile(
+    r"^Data File:\s*(?P<path>/data/anr/[A-Za-z0-9._/-]+)\s*$",
+    re.MULTILINE,
+)
+
+
+def _dropbox_data_file(path: Path) -> Optional[str]:
+    """Return the exact framework ANR trace path recorded by DropBox."""
+    try:
+        body = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = _DROPBOX_DATA_FILE_RE.search(body)
+    return match.group("path") if match else None
+
+
+def _quarantine_unverified(trace_path: Path, target: Path) -> None:
+    quarantine = target / f"{trace_path.name}.unverified"
+    try:
+        trace_path.rename(quarantine)
+    except OSError:
+        try:
+            trace_path.unlink()
+        except OSError:
+            pass
 
 
 def run(
@@ -81,14 +108,7 @@ def run(
                         # reference (IMP-05 / T-L0-013).
                         match_info["trace_verify_reason"] = reason
                         match_info["evidence_match_confidence"] = "low"
-                        quarantine = target / f"{trace_path.name}.unverified"
-                        try:
-                            trace_path.rename(quarantine)
-                        except OSError:
-                            try:
-                                trace_path.unlink()
-                            except OSError:
-                                pass
+                        _quarantine_unverified(trace_path, target)
                         fallback = "verification_failed"
                     else:
                         trace_name = trace_path.name
@@ -100,6 +120,41 @@ def run(
         fallback = "ANR trace pull disabled by config"
 
     dropbox_name = fetch_and_write_dropbox(adb, event, target, base, ctx=ctx, fetcher=fetcher)
+    # Android's ANR DropBox entry records the authoritative source file as
+    # `Data File: /data/anr/...`. This is stronger evidence than an `ls` mtime
+    # score and also works when the candidate header was not readable during
+    # the initial directory scan (the situation seen in incident-032).
+    if pull_anr_trace and trace_name is None and dropbox_name:
+        remote = _dropbox_data_file(target / dropbox_name)
+        if remote:
+            try:
+                if ctx is not None:
+                    ctx.check()
+                adb.pull(
+                    remote,
+                    str(trace_path),
+                    check=True,
+                    timeout=ctx.timeout_for(30.0) if ctx is not None else 30.0,
+                )
+                if trace_path.exists() and trace_path.stat().st_size > 0:
+                    ok, reason = verify_local_trace(trace_path, event)
+                    match_info["trace_verified"] = ok
+                    match_info["trace_verify_reason"] = reason
+                    match_info["evidence_match_reasons"] = list(
+                        dict.fromkeys([*match_info["evidence_match_reasons"], "dropbox_data_file"])
+                    )
+                    if ok:
+                        trace_name = trace_path.name
+                        fallback = None
+                        match_info["evidence_match_confidence"] = "high"
+                    else:
+                        _quarantine_unverified(trace_path, target)
+                        fallback = "ANR trace referenced by DropBox failed verification"
+                        match_info["evidence_match_confidence"] = "low"
+                else:
+                    fallback = "ANR trace referenced by DropBox produced empty file"
+            except AdbError as e:
+                fallback = f"ANR trace referenced by DropBox pull failed: {e}"
     incident = build_incident_dict(
         event,
         logcat_slice_file=slice_name,

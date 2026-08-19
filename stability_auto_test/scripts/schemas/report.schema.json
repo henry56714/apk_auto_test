@@ -119,6 +119,32 @@
         "$ref": "#/definitions/incident"
       }
     },
+    "incident_summary": {
+      "type": "object",
+      "required": [
+        "record_count",
+        "root_problem_count",
+        "correlated_termination_count",
+        "by_type"
+      ],
+      "properties": {
+        "record_count": {
+          "type": "integer"
+        },
+        "root_problem_count": {
+          "type": "integer"
+        },
+        "correlated_termination_count": {
+          "type": "integer"
+        },
+        "by_type": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        }
+      }
+    },
     "issue_groups": {
       "type": "array",
       "items": {
@@ -699,6 +725,39 @@
                 "null"
               ],
               "description": "Filename of matching dropbox entry body, or null if not found"
+            },
+            "secondary_to_incident_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "secondary_to_event_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "root_cause_type": {
+              "type": "string"
+            },
+            "root_cause_delay_sec": {
+              "type": "number"
+            },
+            "termination_incident_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "termination_event_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "termination_delay_sec": {
+              "type": "number"
             }
           }
         }

@@ -1753,6 +1753,19 @@ class CollectorPool:
                     .read_text(encoding="utf-8", errors="replace")
                     .splitlines()
                 )
+            elif (
+                evidence.get("dropbox_file")
+                and search_dir is not None
+                and (search_dir / evidence["dropbox_file"]).exists()
+            ):
+                # ANR DropBox bodies contain the captured stack even when
+                # `/data/anr` cannot be pulled on a restricted production
+                # build, so diagnosis should still consume that evidence.
+                trace_lines = (
+                    (search_dir / evidence["dropbox_file"])
+                    .read_text(encoding="utf-8", errors="replace")
+                    .splitlines()
+                )
             evidence["diagnosis"] = analyze_anr_trace(
                 trace_lines,
                 reason=evidence.get("reason"),

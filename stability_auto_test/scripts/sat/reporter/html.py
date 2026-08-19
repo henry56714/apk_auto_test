@@ -7,7 +7,8 @@ Single self-contained `report.html` that mirrors `report.json`. Layout:
     01       — Plotly event timeline (7 lanes: 4 events + 3 lifecycle)
     02       — process stability table
     03       — Incidents (filter bar + master/detail)
-    04       — Appendix: bookmarks · effective config · data files
+    04       — Additional diagnostics: resources · device · collection
+    05       — Appendix: bookmarks · effective config · data files
     Footer
 
 All rendering is data-driven: Python embeds the result dict as JSON; the
@@ -56,24 +57,24 @@ def _render_issue_groups(groups) -> str:
     for g in groups:
         occ_ids = ", ".join(str(i) for i in g.get("occurrence_ids", []))
         rows.append(
-            '<details>'
-            '<summary>'
+            "<details>"
+            "<summary>"
             f'<span class="chip red">{_html.escape(str(g.get("type", "?")))}</span> '
-            f'{_html.escape(str(g.get("fingerprint", ""))[:12])} · '
-            f'{g.get("occurrence_count", 0)} '
+            f"{_html.escape(str(g.get('fingerprint', ''))[:12])} · "
+            f"{g.get('occurrence_count', 0)} "
             '<span class="zh">次发生</span><span class="en">occurrence(s)</span>'
-            '</summary>'
+            "</summary>"
             f'<div class="mono">'
             f'<span class="zh">受影响进程</span><span class="en">processes</span>: '
-            f'{_html.escape(", ".join(g.get("affected_processes", [])))}<br>'
+            f"{_html.escape(', '.join(g.get('affected_processes', [])))}<br>"
             f'<span class="zh">首次</span><span class="en">first</span>: '
-            f'{_html.escape(str(g.get("first_seen_at", "")))} · '
+            f"{_html.escape(str(g.get('first_seen_at', '')))} · "
             f'<span class="zh">末次</span><span class="en">last</span>: '
-            f'{_html.escape(str(g.get("last_seen_at", "")))}<br>'
+            f"{_html.escape(str(g.get('last_seen_at', '')))}<br>"
             f'<span class="zh">全部 occurrences</span>'
             f'<span class="en">all occurrences</span>: {_html.escape(occ_ids)}'
-            '</div>'
-            '</details>'
+            "</div>"
+            "</details>"
         )
     return (
         '<section id="issue-groups">'
@@ -81,9 +82,7 @@ def _render_issue_groups(groups) -> str:
         '<h2><span class="zh">Issue Groups — 问题聚类</span>'
         '<span class="en">Issue groups</span></h2>'
         '<span class="num-tag">02.5</span>'
-        '</div>'
-        + "\n".join(rows)
-        + '</section>'
+        "</div>" + "\n".join(rows) + "</section>"
     )
 
 
@@ -819,6 +818,47 @@ _CSS = r"""
   }
   .empty-state .emoji { font-size: 40px; display: block; margin-bottom: 14px; }
 
+  .diag-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .diag-card {
+    min-height: 112px;
+    padding: 16px 18px;
+    border: 1px solid var(--rule-2);
+    border-radius: 6px;
+    background: var(--bg-soft);
+  }
+  .diag-card .k {
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+  }
+  .diag-card .v {
+    margin-top: 5px;
+    color: var(--ink);
+    font-family: "SF Mono", "JetBrains Mono", Menlo, monospace;
+    font-size: var(--fs-xl);
+    font-weight: 700;
+    line-height: 1.25;
+  }
+  .diag-card .v.warn { color: var(--accent-2); }
+  .diag-card .v.bad { color: var(--red); }
+  .diag-card .sub { margin-top: 5px; color: var(--muted); font-size: var(--fs-xs); }
+  .diag-json {
+    max-height: 420px;
+    overflow: auto;
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--rule-2);
+    border-radius: 4px;
+    background: var(--bg-soft);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
   kbd {
     font-family: "SF Mono", Menlo, monospace;
     font-size: 0.85em;
@@ -1039,11 +1079,25 @@ _BODY_SKELETON = r"""
     </div>
   </section>
 
+  <!-- ADDITIONAL DIAGNOSTICS -->
+  <section id="additional-diagnostics">
+    <div class="sec-head">
+      <h2><span class="zh">其他稳定性诊断</span><span class="en">Additional diagnostics</span></h2>
+      <span class="num-tag">04</span>
+      <span class="desc">
+        <span class="zh">资源风险 · 设备事件 · ExitInfo · 采集健康度 · 自监控</span>
+        <span class="en">resource risks · device events · ExitInfo · collection health · self monitoring</span>
+      </span>
+    </div>
+    <div class="diag-grid" id="diag-cards"></div>
+    <div id="diag-details"></div>
+  </section>
+
   <!-- APPENDIX -->
   <section>
     <div class="sec-head">
       <h2><span class="zh">附加信息</span><span class="en">Appendix</span></h2>
-      <span class="num-tag">04</span>
+      <span class="num-tag">05</span>
       <span class="desc">
         <span class="zh">书签 · 配置 · 数据文件</span>
         <span class="en">bookmarks · effective config · data files</span>
@@ -1081,8 +1135,8 @@ _BODY_SKELETON = r"""
 
   <footer class="foot">
     <div>
-      <span class="zh">报告由 stability_auto_test v1.0 生成 · schema v1.14</span>
-      <span class="en">Generated by stability_auto_test v1.0 · schema v1.14</span>
+      <span class="zh">报告由 stability_auto_test v1.0 生成 · schema <span id="schema-version">—</span></span>
+      <span class="en">Generated by stability_auto_test v1.0 · schema <span id="schema-version-en">—</span></span>
     </div>
     <div class="mono" id="foot-time"></div>
   </footer>
@@ -1168,6 +1222,15 @@ _JS = r"""
   var totalCrashes   = counts.java_crash + counts.native_crash;
   var totalAnr       = counts.anr;
   var totalDeath     = counts.process_death;
+  var incidentSummary = report.incident_summary || {};
+  var correlatedTerminations = incidentSummary.correlated_termination_count;
+  if (correlatedTerminations == null) {
+    correlatedTerminations = incidents.filter(function (i) {
+      return !!((i.evidence || {}).secondary_to_incident_id);
+    }).length;
+  }
+  var rootProblemCount = incidentSummary.root_problem_count;
+  if (rootProblemCount == null) rootProblemCount = totalIncidents - correlatedTerminations;
 
   // ============ HEADER + VERDICT ============
   function renderHeader() {
@@ -1203,7 +1266,8 @@ _JS = r"""
       : '<span class="zh">异常退出 · ' + escapeHtml(reason) + '</span><span class="en">' + escapeHtml(reason) + '</span>';
     var micro = exitOk && totalIncidents === 0
       ? '<span class="zh">exit_code = 0 · 未检测到稳定性事件</span><span class="en">exit_code = 0 · no stability events</span>'
-      : '<span class="zh">exit_code = ' + run.exit_code + ' · 检测到 ' + totalIncidents + ' 个稳定性事件</span><span class="en">exit_code = ' + run.exit_code + ' · ' + totalIncidents + ' stability events detected</span>';
+      : '<span class="zh">exit_code = ' + run.exit_code + ' · ' + totalIncidents + ' 条观测记录 / ' + rootProblemCount + ' 个根问题</span>' +
+        '<span class="en">exit_code = ' + run.exit_code + ' · ' + totalIncidents + ' observations / ' + rootProblemCount + ' root problems</span>';
     document.getElementById('verdict-pill').innerHTML =
       '<span class="pill ' + pillCls + '">' + pillIcon + ' ' + pillText + '</span>' +
       '<span class="micro">' + micro + '</span>';
@@ -1211,6 +1275,11 @@ _JS = r"""
     // foot time
     var ft = document.getElementById('foot-time');
     if (ft) ft.textContent = run.ended_at || run.started_at || '';
+    var schemaVersion = report.schema_version || '—';
+    var schemaEl = document.getElementById('schema-version');
+    var schemaEnEl = document.getElementById('schema-version-en');
+    if (schemaEl) schemaEl.textContent = schemaVersion;
+    if (schemaEnEl) schemaEnEl.textContent = schemaVersion;
   }
 
   // ============ HERO VERDICT BAR ============
@@ -1358,8 +1427,122 @@ _JS = r"""
     strip.innerHTML =
       '<span class="d"><span class="lbl"><span class="zh">平均在线率</span><span class="en">avg uptime</span></span>' +
       '<span class="val">' + (nProc > 0 ? avgUp.toFixed(1) + ' %' : '—') + '</span></span>' +
+      '<span class="d"><span class="lbl"><span class="zh">根问题 / 观测</span><span class="en">root / observations</span></span>' +
+      '<span class="val">' + rootProblemCount + ' / ' + totalIncidents +
+      (correlatedTerminations ? ' <span class="v-muted">(+' + correlatedTerminations + ' death)</span>' : '') + '</span></span>' +
       '<span class="d"><span class="lbl">logcat buffers</span><span class="val">' + escapeHtml(buffers) + '</span></span>' +
       failHtml;
+  }
+
+  // ============ ADDITIONAL DIAGNOSTICS ============
+  function renderDiagnostics() {
+    var cards = document.getElementById('diag-cards');
+    var details = document.getElementById('diag-details');
+    if (!cards || !details) return;
+
+    var risks = report.resource_risk || [];
+    var exitInfo = report.exit_info || [];
+    var selfResource = report.self_resource || {};
+    var pipeline = report.event_pipeline || {};
+    var capabilities = report.capabilities || [];
+    var availableCapabilities = capabilities.filter(function (c) {
+      return c.status === 'available';
+    }).length;
+    var pipelineLoss = (pipeline.failed_count || 0) + (pipeline.timed_out_count || 0) +
+      (pipeline.dropped_by_cap_count || 0) + (pipeline.dropped_by_backpressure_count || 0);
+    var exitFailures = exitInfo.filter(function (record) {
+      return record.is_stability_failure === true;
+    }).length;
+    var correlatedExitInfo = exitInfo.filter(function (record) {
+      return !!record.correlated_incident_id;
+    }).length;
+    var coverage = report.coverage_ratio;
+    var coverageText = coverage == null ? '—' : (coverage * 100).toFixed(1) + '%';
+
+    function card(kZh, kEn, value, subZh, subEn, cls) {
+      return '<div class="diag-card"><div class="k"><span class="zh">' + escapeHtml(kZh) +
+        '</span><span class="en">' + escapeHtml(kEn) + '</span></div>' +
+        '<div class="v ' + (cls || '') + '">' + escapeHtml(String(value)) + '</div>' +
+        '<div class="sub"><span class="zh">' + escapeHtml(subZh) + '</span><span class="en">' +
+        escapeHtml(subEn) + '</span></div></div>';
+    }
+    cards.innerHTML =
+      card('采集健康度', 'collection health', report.collection_health || 'unknown',
+        '覆盖率 ' + coverageText, 'coverage ' + coverageText,
+        report.collection_health === 'healthy' ? '' : 'warn') +
+      card('根问题', 'root problems', rootProblemCount,
+        totalIncidents + ' 条观测，' + correlatedTerminations + ' 条关联退出',
+        totalIncidents + ' observations, ' + correlatedTerminations + ' related deaths',
+        rootProblemCount ? 'bad' : '') +
+      card('资源风险', 'resource risks', risks.length,
+        'FD / 线程 / 内存等趋势', 'FD / thread / memory trends', risks.length ? 'warn' : '') +
+      card('设备事件', 'device events', deviceEvents.length,
+        '重启 / 睡眠 / 断连等环境事件', 'reboot / sleep / disconnect context', deviceEvents.length ? 'warn' : '') +
+      card('ExitInfo', 'ExitInfo', exitFailures + ' / ' + exitInfo.length,
+        correlatedExitInfo + ' 条已关联到 incident', correlatedExitInfo + ' correlated to incidents', '') +
+      card('采集管线损失', 'pipeline loss', pipelineLoss,
+        (pipeline.persisted_count || 0) + ' 条已落盘', (pipeline.persisted_count || 0) + ' persisted',
+        pipelineLoss ? 'bad' : '') +
+      card('能力探测', 'capabilities', availableCapabilities + ' / ' + capabilities.length,
+        '设备侧证据源可用', 'device evidence sources available',
+        availableCapabilities < capabilities.length ? 'warn' : '') +
+      card('测试器自监控', 'runner self-monitor', (selfResource.samples || []).length,
+        '峰值 RSS ' + (selfResource.rss_peak_kb == null ? '—' : selfResource.rss_peak_kb + ' KB'),
+        'peak RSS ' + (selfResource.rss_peak_kb == null ? '—' : selfResource.rss_peak_kb + ' KB'), '');
+
+    function jsonBody(value) {
+      return '<pre class="diag-json mono">' + escapeHtml(JSON.stringify(value, null, 2)) + '</pre>';
+    }
+    function accordion(icon, titleZh, titleEn, countText, body) {
+      return '<details class="acc"><summary><span>' + icon + ' <span class="zh">' +
+        escapeHtml(titleZh) + '</span><span class="en">' + escapeHtml(titleEn) + '</span></span>' +
+        '<span class="s-right">' + escapeHtml(countText) + '</span></summary>' +
+        '<div class="body">' + body + '</div></details>';
+    }
+
+    var riskBody = risks.length === 0
+      ? '<div class="v-muted">' + tr('未检测到资源增长风险。', 'No resource-growth risks detected.') + '</div>'
+      : '<div class="table-scroll"><table class="tbl"><thead><tr><th>pid</th><th>metric</th>' +
+        '<th class="r">baseline</th><th class="r">value</th><th>' + tr('摘要', 'summary') +
+        '</th></tr></thead><tbody>' + risks.map(function (risk) {
+          return '<tr><td class="mono">' + escapeHtml(risk.pid) + '</td><td class="mono">' +
+            escapeHtml(risk.metric) + '</td><td class="r mono">' + escapeHtml(risk.baseline) +
+            '</td><td class="r mono">' + escapeHtml(risk.value) + '</td><td>' +
+            escapeHtml(risk.message || '') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+
+    var deviceBody = deviceEvents.length === 0
+      ? '<div class="v-muted">' + tr('未记录设备环境事件。', 'No device environment events recorded.') + '</div>'
+      : jsonBody(deviceEvents);
+    var exitBody = exitInfo.length === 0
+      ? '<div class="v-muted">' + tr('无 ApplicationExitInfo 记录。', 'No ApplicationExitInfo records.') + '</div>'
+      : jsonBody(exitInfo);
+    var selfSummary = {
+      sample_count: (selfResource.samples || []).length,
+      rss_growth_kb: selfResource.rss_growth_kb,
+      rss_peak_kb: selfResource.rss_peak_kb,
+      threads_peak: selfResource.threads_peak,
+      fds_peak: selfResource.fds_peak,
+      queue_peak: selfResource.queue_peak,
+    };
+    var collectionDetails = {
+      verdict: report.verdict,
+      verdict_reason: report.verdict_reason || [],
+      verdict_confidence: report.verdict_confidence,
+      event_pipeline: pipeline,
+      collectors: report.collectors || {},
+      capabilities: capabilities,
+      disk_audit: report.disk_audit || [],
+      policy: report.policy || {},
+      recovery_warnings: report.recovery_warnings || [],
+    };
+    details.innerHTML =
+      accordion('⚠', '资源风险', 'Resource risks', String(risks.length), riskBody) +
+      accordion('📱', '设备环境事件', 'Device environment events', String(deviceEvents.length), deviceBody) +
+      accordion('↪', 'ApplicationExitInfo 交叉证据', 'ApplicationExitInfo evidence', String(exitInfo.length), exitBody) +
+      accordion('◉', '测试器自监控', 'Runner self-monitoring', String(selfSummary.sample_count), jsonBody(selfSummary)) +
+      accordion('⌁', '采集器、能力与策略审计', 'Collectors, capabilities & policy audit',
+        availableCapabilities + '/' + capabilities.length, jsonBody(collectionDetails));
   }
 
   // ============ TYPE CHIP COUNTS ============
@@ -1370,8 +1553,8 @@ _JS = r"""
       if (el) el.textContent = '(' + counts[t] + ')';
     });
     document.getElementById('inc-desc-count').innerHTML =
-      '<span class="zh">' + totalIncidents + ' 条事件</span>' +
-      '<span class="en">' + totalIncidents + ' incident' + (totalIncidents === 1 ? '' : 's') + '</span>';
+      '<span class="zh">' + totalIncidents + ' 条观测 · ' + rootProblemCount + ' 个根问题</span>' +
+      '<span class="en">' + totalIncidents + ' observations · ' + rootProblemCount + ' root problems</span>';
     document.getElementById('list-count').textContent = totalIncidents + ' / ' + totalIncidents;
   }
 
@@ -1800,7 +1983,12 @@ _JS = r"""
     var pkgPrefix = run.package || '';
     var emptyFrameMsg;
     if (inc.type === 'java_crash' || inc.type === 'native_crash') {
-      if (ev.source === 'dropbox') {
+      if (ev.source === 'exit_info') {
+        emptyFrameMsg = tr(
+          '该事件仅由 Android ApplicationExitInfo 补报；系统记录了退出原因和资源数据，但不提供 Java 异常类、消息或调用栈。它的证据完整度低于 logcat/DropBox crash。',
+          'This event was recovered only from Android ApplicationExitInfo. Android provides the exit reason and resource data, but no Java exception class, message, or stack; evidence is less complete than a logcat/DropBox crash.'
+        );
+      } else if (ev.source === 'dropbox') {
         emptyFrameMsg = tr(
           'dropbox 事件未提取到调用栈（Chromium/WebView 等非标准崩溃格式），可查阅现场文件 (.txt)。',
           'No stack frames from dropbox event (non-standard crash format e.g. Chromium/WebView) — see the .txt evidence file.'
@@ -1830,8 +2018,8 @@ _JS = r"""
              '<div class="v ' + cls + '">' + (v != null && v !== '' ? escapeHtml(String(v)) : '—') + '</div></div>';
     }
     // SOURCE_LABELS: logcat = 实时流，dropbox = 兜底轮询，watcher = 进程监控
-    var SRC_LABEL = { logcat: 'logcat（实时）', dropbox: 'dropbox（兜底）', watcher: 'watcher（进程监控）' };
-    var SRC_LABEL_EN = { logcat: 'logcat (realtime)', dropbox: 'dropbox (fallback poll)', watcher: 'watcher (process monitor)' };
+    var SRC_LABEL = { logcat: 'logcat（实时）', dropbox: 'dropbox（兜底）', watcher: 'watcher（进程监控）', exit_info: 'ApplicationExitInfo（系统补报）' };
+    var SRC_LABEL_EN = { logcat: 'logcat (realtime)', dropbox: 'dropbox (fallback poll)', watcher: 'watcher (process monitor)', exit_info: 'ApplicationExitInfo (system record)' };
     function sourceBox(src) {
       var zh = SRC_LABEL[src] || src || '—';
       var en = SRC_LABEL_EN[src] || src || '—';
@@ -1843,6 +2031,16 @@ _JS = r"""
       typeFields = statBox('异常类', 'Exception class', ev.exception_class || '—', 'red') +
                    sourceBox(ev.source) +
                    statBox('设备时间戳', 'Device ts', ev.device_ts || '—') +
+                   (ev.crashing_thread ? statBox('崩溃线程', 'Crashing thread', ev.crashing_thread) : '') +
+                   (ev.subtype ? statBox('崩溃子类型', 'Crash subtype', ev.subtype) : '') +
+                   (ev.evidence_completeness ? statBox('证据完整度', 'Evidence completeness', ev.evidence_completeness) : '') +
+                   (ev.detection_confidence ? statBox('检测置信度', 'Detection confidence', ev.detection_confidence) : '') +
+                   (ev.exit_info_reason ? statBox('ExitInfo 原因', 'ExitInfo reason', ev.exit_info_reason) : '') +
+                   (ev.exit_subreason ? statBox('ExitInfo 子原因', 'ExitInfo subreason', ev.exit_subreason) : '') +
+                   (ev.exit_info_description ? statBox('ExitInfo 描述', 'ExitInfo description', ev.exit_info_description) : '') +
+                   (ev.exit_info_rss_kb != null ? statBox('ExitInfo RSS', 'ExitInfo RSS', ev.exit_info_rss_kb + ' KB') : '') +
+                   (ev.supporting_sources ? statBox('交叉证据源', 'Supporting sources', ev.supporting_sources.join(', ')) : '') +
+                   (ev.termination_incident_id ? statBox('关联进程退出', 'Related termination', ev.termination_incident_id + ' (+' + (ev.termination_delay_sec || 0) + 's)') : '') +
                    (ev.fallback_reason ? statBox('降级原因', 'Fallback reason', ev.fallback_reason) : '');
     } else if (inc.type === 'native_crash') {
       typeFields = statBox('信号', 'Signal', ev.signal || '—', 'red') +
@@ -1860,7 +2058,10 @@ _JS = r"""
     } else {
       typeFields = statBox('原因', 'Reason', decodeReason(ev.reason)) +
                    sourceBox(ev.source) +
-                   statBox('设备时间戳', 'Device ts', ev.device_ts || '—');
+                   statBox('设备时间戳', 'Device ts', ev.device_ts || '—') +
+                   (ev.secondary_to_incident_id
+                     ? statBox('归属根问题', 'Root problem', ev.secondary_to_incident_id + ' (' + (ev.root_cause_type || 'crash') + ')')
+                     : statBox('计数口径', 'Counting', tr('独立根问题', 'independent root problem')));
     }
 
     var filesParts = [];
@@ -1868,10 +2069,18 @@ _JS = r"""
       filesParts.push('<div class="file-line"><span class="k">' + tr('logcat 现场', 'logcat slice') + '</span>' +
         '<a href="incidents/' + escapeAttr(ev.logcat_slice_file) + '" target="_blank">incidents/' + escapeHtml(ev.logcat_slice_file) + '</a></div>');
     }
+    if (ev.dropbox_file) {
+      filesParts.push('<div class="file-line"><span class="k">DropBox</span>' +
+        '<a href="incidents/' + escapeAttr(ev.dropbox_file) + '" target="_blank">incidents/' + escapeHtml(ev.dropbox_file) + '</a></div>');
+    }
     if (inc.type === 'native_crash') {
       if (ev.trace_file) {
         filesParts.push('<div class="file-line"><span class="k">tombstone</span>' +
           '<a href="incidents/' + escapeAttr(ev.trace_file) + '" target="_blank">incidents/' + escapeHtml(ev.trace_file) + '</a></div>');
+      } else if (ev.dropbox_file) {
+        filesParts.push('<div class="file-line warn"><span class="k">ANR trace</span><span>⚠ ' +
+          tr('独立 trace 未拉取；完整线程栈保存在上方 DropBox 文件中。', 'Standalone trace was not pulled; the full thread stack is preserved in the DropBox file above.') +
+          '</span></div>');
       } else if (ev.fallback_reason) {
         filesParts.push('<div class="file-line warn"><span class="k">tombstone</span><span>⚠ ' + escapeHtml(ev.fallback_reason) + '</span></div>');
       }
@@ -2014,6 +2223,7 @@ _JS = r"""
         if (window.Plotly) renderTimeline();
         renderFilesTree();
         renderBookmarks();
+        renderDiagnostics();
       });
     });
     paint();
@@ -2258,6 +2468,7 @@ _JS = r"""
     renderVerdictBar();
     renderHeroCards();
     renderDerivedStrip();
+    renderDiagnostics();
     renderTypeChipCounts();
     renderProcessSelect();
     renderProcessTable();
@@ -2312,6 +2523,21 @@ def render(result: Dict) -> str:
         },
         "processes": result.get("processes", []) or [],
         "bookmarks": result.get("bookmarks", []) or [],
+        "incident_summary": result.get("incident_summary", {}) or {},
+        "resource_risk": result.get("resource_risk", []) or [],
+        "self_resource": result.get("self_resource", {}) or {},
+        "exit_info": result.get("exit_info", []) or [],
+        "event_pipeline": result.get("event_pipeline", {}) or {},
+        "collection_health": result.get("collection_health", "unknown"),
+        "coverage_ratio": result.get("coverage_ratio"),
+        "verdict": result.get("verdict"),
+        "verdict_reason": result.get("verdict_reason", []) or [],
+        "verdict_confidence": result.get("verdict_confidence"),
+        "collectors": result.get("collectors", {}) or {},
+        "capabilities": result.get("capabilities", []) or [],
+        "disk_audit": result.get("disk_audit", []) or [],
+        "policy": result.get("policy", {}) or {},
+        "recovery_warnings": result.get("recovery_warnings", []) or [],
     }
     incidents_block = result.get("incidents", []) or []
     issue_groups_block = result.get("issue_groups", []) or []
@@ -2321,27 +2547,46 @@ def render(result: Dict) -> str:
     config_block = config_eff
 
     parts = [
-        '<!doctype html>',
+        "<!doctype html>",
         '<html lang="zh-CN" data-lang="zh">',
-        '<head>',
+        "<head>",
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
-        f'<title>Stability report — {_html.escape(pkg)}</title>',
-        '<script charset="utf-8">', _PLOTLY_JS, '</script>',
-        '<style>', _CSS, '</style>',
-        '</head>',
-        '<body>',
+        f"<title>Stability report — {_html.escape(pkg)}</title>",
+        '<script charset="utf-8">',
+        _PLOTLY_JS,
+        "</script>",
+        "<style>",
+        _CSS,
+        "</style>",
+        "</head>",
+        "<body>",
         _BODY_SKELETON.replace(
-            "<!-- ISSUE_GROUPS -->", _render_issue_groups(issue_groups_block),
+            "<!-- ISSUE_GROUPS -->",
+            _render_issue_groups(issue_groups_block),
         ),
-        '<script type="application/json" id="report-data">', _safe_json(report_block), '</script>',
-        '<script type="application/json" id="incidents-data">', _safe_json(incidents_block), '</script>',
-        '<script type="application/json" id="device-events-data">', _safe_json(device_events_block), '</script>',
-        '<script type="application/json" id="lifecycle-data">', _safe_json(lifecycle_block), '</script>',
-        '<script type="application/json" id="files-data">', _safe_json(files_block), '</script>',
-        '<script type="application/json" id="config-data">', _safe_json(config_block), '</script>',
-        '<script>', _JS, '</script>',
-        '</body></html>',
+        '<script type="application/json" id="report-data">',
+        _safe_json(report_block),
+        "</script>",
+        '<script type="application/json" id="incidents-data">',
+        _safe_json(incidents_block),
+        "</script>",
+        '<script type="application/json" id="device-events-data">',
+        _safe_json(device_events_block),
+        "</script>",
+        '<script type="application/json" id="lifecycle-data">',
+        _safe_json(lifecycle_block),
+        "</script>",
+        '<script type="application/json" id="files-data">',
+        _safe_json(files_block),
+        "</script>",
+        '<script type="application/json" id="config-data">',
+        _safe_json(config_block),
+        "</script>",
+        "<script>",
+        _JS,
+        "</script>",
+        "</body></html>",
     ]
     return "\n".join(parts)
 

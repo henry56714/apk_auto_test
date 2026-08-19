@@ -54,6 +54,24 @@ def _make_incidents(output_dir: Path):
             }
         )
     )
+    (inc_dir / "process_death_002.json").write_text(
+        json.dumps(
+            {
+                "type": "process_death",
+                "process": "com.example.app",
+                "pid": 1234,
+                "triggered_at": "2026-05-21 10:00:01.000",
+                "severity": "error",
+                "summary": "process disappeared",
+                "evidence": {
+                    "source": "watcher",
+                    "reason": "pid disappeared",
+                    "dedup_count": 1,
+                    "top_frames": [],
+                },
+            }
+        )
+    )
 
 
 def test_build_and_schema_validate(tmp_path: Path):
@@ -76,8 +94,26 @@ def test_build_and_schema_validate(tmp_path: Path):
     # Process has the java_crash counted
     proc = next(p for p in result["processes"] if p["name"] == "com.example.app")
     assert proc["events"]["java_crash"] == 1
+    assert proc["events"]["process_death"] == 1
     assert proc["restart_count"] == 1
     assert 0.0 < proc["uptime_ratio"] <= 1.0
+    crash = next(i for i in result["incidents"] if i["type"] == "java_crash")
+    death = next(i for i in result["incidents"] if i["type"] == "process_death")
+    assert death["evidence"]["secondary_to_incident_id"] == crash["id"]
+    assert crash["evidence"]["termination_incident_id"] == death["id"]
+    assert result["incident_summary"] == {
+        "record_count": 2,
+        "root_problem_count": 1,
+        "correlated_termination_count": 1,
+        "by_type": {
+            "java_crash": 1,
+            "native_crash": 0,
+            "anr": 0,
+            "process_death": 1,
+        },
+    }
+    assert len(result["issue_groups"]) == 1
+    assert result["issue_groups"][0]["type"] == "java_crash"
     # Schema check
     schema = json.loads(SCHEMA_PATH.read_text())
     jsonschema.validate(result, schema)

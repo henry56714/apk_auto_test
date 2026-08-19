@@ -88,10 +88,18 @@ def test_native_crash_falls_back_without_tombstone(tmp_path: Path):
 
 
 def test_native_crash_pulls_tombstone_when_available(tmp_path: Path):
-    adb = _fake_trace_adb([(
-        "tombstone_00", 1234, "2026-05-21", "10:00:00",
-        "pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n",
-    )], pull_body="pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n")
+    adb = _fake_trace_adb(
+        [
+            (
+                "tombstone_00",
+                1234,
+                "2026-05-21",
+                "10:00:00",
+                "pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n",
+            )
+        ],
+        pull_body="pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n",
+    )
     inc = native_dumper.run(
         adb,
         _event(event_type=EVENT_NATIVE_CRASH, triggered_at="2026-05-21 10:00:00.000"),
@@ -108,7 +116,9 @@ def test_native_crash_pull_disabled(tmp_path: Path):
     adb = MagicMock()
     adb.shell.return_value = MagicMock(returncode=0, stdout="")
     inc = native_dumper.run(
-        adb, _event(event_type=EVENT_NATIVE_CRASH), tmp_path,
+        adb,
+        _event(event_type=EVENT_NATIVE_CRASH),
+        tmp_path,
         pull_tombstone=False,
     )
     assert inc["evidence"]["trace_file"] is None
@@ -116,14 +126,48 @@ def test_native_crash_pull_disabled(tmp_path: Path):
 
 
 def test_anr_dumper_pull_failure(tmp_path: Path):
-    adb = _fake_trace_adb([(
-        "anr_2026-05-21-100000-1", 5000, "2026-05-21", "10:00:00",
-        "----- pid 1234 at 2026-05-21 10:00:00 -----\nCmd line: com.example.app\n",
-    )])
+    adb = _fake_trace_adb(
+        [
+            (
+                "anr_2026-05-21-100000-1",
+                5000,
+                "2026-05-21",
+                "10:00:00",
+                "----- pid 1234 at 2026-05-21 10:00:00 -----\nCmd line: com.example.app\n",
+            )
+        ]
+    )
     adb.pull.side_effect = AdbError("permission denied")
     inc = anr_dumper.run(adb, _event(event_type=EVENT_ANR), tmp_path)
     assert inc["evidence"]["trace_file"] is None
     assert "ANR trace pull failed" in inc["evidence"]["fallback_reason"]
+
+    # The candidate scan may be inconclusive even though DropBox gives the
+    # exact framework trace path. In that case the exact path must win.
+    trace_body = (
+        "----- pid 1234 at 2026-05-21 10:00:00 -----\n"
+        "Cmd line: com.example.app\n"
+        '"main" prio=5 tid=1 Runnable\n'
+        "  at com.example.app.Main.run(Main.java:1)\n"
+    )
+    exact_adb = _fake_trace_adb([], pull_body=trace_body)
+    fetcher = MagicMock()
+    fetcher.fetch.return_value = [
+        "Process: com.example.app",
+        "Data File: /data/anr/anr_2026-05-21-10-00-00-000",
+        trace_body,
+    ]
+    recovered = anr_dumper.run(
+        exact_adb,
+        _event(event_type=EVENT_ANR),
+        tmp_path / "dropbox-recovery",
+        fetcher=fetcher,
+    )
+    assert recovered["evidence"]["trace_file"] is not None
+    assert recovered["evidence"]["fallback_reason"] is None
+    assert recovered["evidence"]["trace_verified"] is True
+    assert "dropbox_data_file" in recovered["evidence"]["evidence_match_reasons"]
+    assert exact_adb.pull.call_args.args[0] == "/data/anr/anr_2026-05-21-10-00-00-000"
 
 
 def test_proc_death_writes_minimal_incident(tmp_path: Path):
@@ -140,16 +184,24 @@ def test_proc_death_writes_minimal_incident(tmp_path: Path):
 
 
 def test_trace_matcher_prefers_target_pid_over_latest_other_package():
-    adb = _fake_trace_adb([
-        (
-            "tombstone_01", 200, "2026-05-21", "10:00:05",
-            "pid: 9999, tid: 9999, name: main >>> com.example.other <<<\n",
-        ),
-        (
-            "tombstone_00", 100, "2026-05-21", "09:59:58",
-            "pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n",
-        ),
-    ])
+    adb = _fake_trace_adb(
+        [
+            (
+                "tombstone_01",
+                200,
+                "2026-05-21",
+                "10:00:05",
+                "pid: 9999, tid: 9999, name: main >>> com.example.other <<<\n",
+            ),
+            (
+                "tombstone_00",
+                100,
+                "2026-05-21",
+                "09:59:58",
+                "pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n",
+            ),
+        ]
+    )
     event = _event(
         event_type=EVENT_NATIVE_CRASH,
         triggered_at="2026-05-21 10:00:00.000",
@@ -163,10 +215,17 @@ def test_trace_matcher_prefers_target_pid_over_latest_other_package():
 
 
 def test_trace_matcher_rejects_pid_match_with_distant_time():
-    adb = _fake_trace_adb([(
-        "tombstone_00", 100, "2026-05-21", "08:00:00",
-        "pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n",
-    )])
+    adb = _fake_trace_adb(
+        [
+            (
+                "tombstone_00",
+                100,
+                "2026-05-21",
+                "08:00:00",
+                "pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n",
+            )
+        ]
+    )
     event = _event(
         event_type=EVENT_NATIVE_CRASH,
         triggered_at="2026-05-21 10:00:00.000",
@@ -179,16 +238,24 @@ def test_trace_matcher_rejects_pid_match_with_distant_time():
 
 
 def test_trace_matcher_matches_multiple_child_processes():
-    adb = _fake_trace_adb([
-        (
-            "tombstone_a", 100, "2026-05-21", "10:00:00",
-            "pid: 2001, tid: 2001, name: r1 >>> com.example.app:remote <<<\n",
-        ),
-        (
-            "tombstone_b", 100, "2026-05-21", "10:00:01",
-            "pid: 2002, tid: 2002, name: r2 >>> com.example.app:push <<<\n",
-        ),
-    ])
+    adb = _fake_trace_adb(
+        [
+            (
+                "tombstone_a",
+                100,
+                "2026-05-21",
+                "10:00:00",
+                "pid: 2001, tid: 2001, name: r1 >>> com.example.app:remote <<<\n",
+            ),
+            (
+                "tombstone_b",
+                100,
+                "2026-05-21",
+                "10:00:01",
+                "pid: 2002, tid: 2002, name: r2 >>> com.example.app:push <<<\n",
+            ),
+        ]
+    )
     ev_a = _event(
         event_type=EVENT_NATIVE_CRASH,
         process="com.example.app:remote",
@@ -209,7 +276,9 @@ def test_trace_matcher_permission_denied_does_not_raise(tmp_path: Path):
     adb = MagicMock()
     adb.shell.return_value = MagicMock(returncode=1, stdout="")
     inc = native_dumper.run(
-        adb, _event(event_type=EVENT_NATIVE_CRASH), tmp_path,
+        adb,
+        _event(event_type=EVENT_NATIVE_CRASH),
+        tmp_path,
     )
     assert inc["evidence"]["trace_file"] is None
     assert inc["evidence"]["evidence_match_confidence"] == "none"
@@ -217,10 +286,17 @@ def test_trace_matcher_permission_denied_does_not_raise(tmp_path: Path):
 
 
 def test_trace_matcher_low_confidence_not_confirmed(tmp_path: Path):
-    adb = _fake_trace_adb([(
-        "tombstone_00", 100, "2026-05-21", "06:00:00",
-        "pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n",
-    )])
+    adb = _fake_trace_adb(
+        [
+            (
+                "tombstone_00",
+                100,
+                "2026-05-21",
+                "06:00:00",
+                "pid: 1234, tid: 1234, name: main >>> com.example.app <<<\n",
+            )
+        ]
+    )
     inc = native_dumper.run(
         adb,
         _event(event_type=EVENT_NATIVE_CRASH, triggered_at="2026-05-21 10:00:00.000"),
