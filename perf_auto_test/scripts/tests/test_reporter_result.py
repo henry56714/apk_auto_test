@@ -179,6 +179,42 @@ class TestBuild:
         assert cpu_stats["max"] == 95.0
         assert cpu_stats["samples"] == 10
 
+    def test_cpu_compute_k_from_mean(self, populated_dir):
+        # Default total 230 K, device has 8 cores.
+        # mean = (3*95 + 7*10) / 10 = 35.5
+        # compute = 230 * 35.5 / (8 * 100) = 10.20625 → 10.21
+        r = _build(populated_dir)
+        main = next(p for p in r["processes"] if p["name"] == "com.foo")
+        assert main["stats"]["cpu_pct"]["mean"] == 35.5
+        assert main["stats"]["cpu_compute_k"] == 10.21
+
+    def test_cpu_compute_k_respects_config_total(self, populated_dir):
+        r = result_mod.build(
+            output_dir=populated_dir,
+            package="com.foo",
+            started_at=_utc(minute=0),
+            ended_at=_utc(minute=10),
+            device=DEVICE,
+            config_effective={"cpu_total_compute_k": 100},
+            exit_code=0,
+            exit_reason="duration_elapsed",
+        )
+        main = next(p for p in r["processes"] if p["name"] == "com.foo")
+        # 100 * 35.5 / 800 = 4.4375 → 4.44
+        assert main["stats"]["cpu_compute_k"] == 4.44
+
+    def test_cpu_compute_k_null_without_samples(self, populated_dir):
+        r = _build(populated_dir)
+        remote = next(p for p in r["processes"] if p["name"] == "com.foo:remote")
+        assert remote["stats"]["cpu_pct"] is None
+        assert remote["stats"]["cpu_compute_k"] is None
+
+    def test_cpu_compute_helper(self):
+        assert result_mod._cpu_compute_k({"mean": 1.94}, 6, 230) == 0.74
+        assert result_mod._cpu_compute_k(None, 6, 230) is None
+        assert result_mod._cpu_compute_k({"mean": 10}, 0, 230) is None
+        assert result_mod._cpu_compute_k({"mean": 10}, "bad", 230) is None
+
     def test_mem_stats_computed(self, populated_dir):
         r = _build(populated_dir)
         main = next(p for p in r["processes"] if p["name"] == "com.foo")

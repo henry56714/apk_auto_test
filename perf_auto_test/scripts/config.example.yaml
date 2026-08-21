@@ -1,6 +1,9 @@
 package: com.example.app
 device: null                      # 空 = 取 `adb devices` 唯一在线设备；多台则必填 --device
 
+cpu:
+  total_compute_k: 230            # 总算力，单位固定 K；占用算力 = 总算力 × 均值% / (核数×100)
+
 thresholds:
   cpu:
     percent: 10                   # 单核归一化（与 top 一致；4 核全满 = 400%）

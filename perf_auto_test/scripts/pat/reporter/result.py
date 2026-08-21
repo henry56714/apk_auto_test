@@ -132,6 +132,24 @@ def _load_incidents(incidents_dir: Path) -> List[Dict]:
     return out
 
 
+def _cpu_compute_k(
+    cpu_stats: Optional[Dict[str, float]],
+    cpu_cores: Any,
+    total_compute_k: Any,
+) -> Optional[float]:
+    """Occupied compute (K) = total_k × mean% / (cores × 100)."""
+    if not cpu_stats or "mean" not in cpu_stats:
+        return None
+    try:
+        cores = float(cpu_cores)
+        total_k = float(total_compute_k)
+    except (TypeError, ValueError):
+        return None
+    if cores <= 0 or total_k < 0:
+        return None
+    return round(total_k * float(cpu_stats["mean"]) / (cores * 100.0), 2)
+
+
 def _build_process(
     name: str,
     cpu_df: pd.DataFrame,
@@ -141,6 +159,9 @@ def _build_process(
     run_end: datetime,
     incidents: List[Dict],
     sample_failures: Dict[str, Dict[str, int]],
+    *,
+    cpu_cores: Any = None,
+    cpu_total_compute_k: Any = 230.0,
 ) -> Dict:
     proc_cpu = (cpu_df[cpu_df["process_name"] == name]
                 if not cpu_df.empty and "process_name" in cpu_df.columns
@@ -172,6 +193,7 @@ def _build_process(
         "restart_count": restart_count,
         "stats": {
             "cpu_pct": cpu_stats,
+            "cpu_compute_k": _cpu_compute_k(cpu_stats, cpu_cores, cpu_total_compute_k),
             "mem_pss_mb": mem_stats,
         },
         "alerts": _incidents_count_for(incidents, name),
@@ -238,8 +260,12 @@ def build(
     process_names.update(sample_failures.keys())
 
     processes = [
-        _build_process(name, cpu_df, mem_df, life_df, started_at, ended_at,
-                       incidents, sample_failures)
+        _build_process(
+            name, cpu_df, mem_df, life_df, started_at, ended_at,
+            incidents, sample_failures,
+            cpu_cores=device.get("cpu_cores"),
+            cpu_total_compute_k=config_effective.get("cpu_total_compute_k", 230.0),
+        )
         for name in sorted(process_names)
     ]
 

@@ -85,7 +85,8 @@ class TestBuildConfig:
             package="com.foo", output="/tmp/x", duration=300.0, device=None,
             wait_timeout=None, cpu_interval=None, mem_interval=None,
             rescan_interval=None, processes=None,
-            cpu_threshold_percent=None, cpu_sustain_sec=None, cpu_cooldown_sec=None,
+            cpu_threshold_percent=None, cpu_total_compute_k=None,
+            cpu_sustain_sec=None, cpu_cooldown_sec=None,
             mem_threshold_pss_mb=None, mem_sustain_sec=None, mem_cooldown_sec=None,
             no_heap_dumps=False, status_interval=None,
             no_html=False,
@@ -143,6 +144,24 @@ class TestBuildConfig:
         )
         assert cfg.package == "com.from.cli"
         assert cfg.cpu_threshold_percent == 85.0
+
+    def test_yaml_cpu_total_compute_k(self, tmp_path):
+        yaml_path = tmp_path / "c.yaml"
+        yaml_path.write_text(
+            "package: com.from.yaml\n"
+            "cpu:\n"
+            "  total_compute_k: 300\n",
+            encoding="utf-8",
+        )
+        cfg = cli.build_config(
+            self._args(package=None, output="/tmp/y"),
+            yaml_path=yaml_path,
+        )
+        assert cfg.cpu_total_compute_k == 300
+
+    def test_default_cpu_total_compute_k(self):
+        cfg = cli.build_config(self._args(), yaml_path=None)
+        assert cfg.cpu_total_compute_k == 230.0
 
     def test_processes_filter_parsed(self):
         cfg = cli.build_config(self._args(processes=":remote,:push"), yaml_path=None)

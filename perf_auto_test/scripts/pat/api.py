@@ -47,6 +47,7 @@ DEFAULT_CPU_INTERVAL_SEC: float = 1.0
 DEFAULT_MEM_INTERVAL_SEC: float = 5.0
 DEFAULT_RESCAN_INTERVAL_SEC: float = 5.0
 DEFAULT_CPU_THRESHOLD_PERCENT: float = 80.0
+DEFAULT_CPU_TOTAL_COMPUTE_K: float = 230.0
 DEFAULT_CPU_SUSTAIN_SEC: float = 60.0
 DEFAULT_CPU_COOLDOWN_SEC: float = 300.0
 DEFAULT_MEM_THRESHOLD_PSS_MB: float = 500.0
@@ -74,6 +75,7 @@ class PerfConfig:
     process_filter: Optional[List[str]] = None
 
     cpu_threshold_percent: float = DEFAULT_CPU_THRESHOLD_PERCENT
+    cpu_total_compute_k: float = DEFAULT_CPU_TOTAL_COMPUTE_K
     cpu_sustain_sec: float = DEFAULT_CPU_SUSTAIN_SEC
     cpu_cooldown_sec: float = DEFAULT_CPU_COOLDOWN_SEC
     mem_threshold_pss_mb: float = DEFAULT_MEM_THRESHOLD_PSS_MB
