@@ -1,0 +1,138 @@
+---
+name: perf-auto-test
+description: 对 Android APK 做性能测试、跑 CPU/内存监控、压测期间抓取性能数据时使用。给定包名，连接安卓设备/模拟器后自动采集 CPU 和内存指标，超阈值自动 dump 现场，测试结束后输出性能总结并弹出网页图表报告。
+when_to_use: 用户说"帮我跑性能测试"、"测一下这个 APK 的内存"、"监控 CPU 使用率"、"压测期间跑 perf"、"跑 perf-auto-test"时触发。
+argument-hint: <package> [duration] [--device serial] [--config path] [--output dir]
+---
+
+# perf-auto-test
+
+## 参数解析
+
+从 args 或对话上下文中提取。**只有 `--package` 是必填的**，其余均有代码默认值。
+
+| 参数 | 说明 | 默认值 |
+|---|---|---|
+| `--package` | 目标 APK 包名（**必填**）| — |
+| `--duration` | 采集时长，如 `30s`、`5m`、`1h` | `5m` |
+| `--output` | 报告输出目录（不填时自动生成） | `./reports/<包名末段>_<YYYYMMDD_HHMMSS>` |
+| `--device` | ADB serial（多设备时必填）| 自动取唯一在线设备 |
+| `--config` | YAML 配置路径（覆盖阈值等）| — |
+| `--cpu-threshold-percent` | CPU% 报警阈值（单核归一化，4核全满=400%）| 80 |
+| `--cpu-compute-k` | CPU 总算力（单位 K，用于占用算力列）| 230 |
+| `--mem-threshold-pss-mb` | 内存 PSS MB 报警阈值 | 500 |
+
+> 采样间隔、cooldown、dump 上限、输出格式等进阶参数均在代码中有默认值，需要时可通过 `--config` YAML 覆盖，见仓库内 `perf_auto_test/scripts/config.example.yaml`。
+
+**简写识别**：`/perf-auto-test com.example.app 5m` → `--package com.example.app --duration 5m`
+
+## 步骤 1：环境检查
+
+```bash
+python -m pat --help
+```
+
+若报 ModuleNotFoundError，在 `perf_auto_test/scripts/` 下安装依赖后重试：
+
+```bash
+pip install -r requirements.txt
+```
+
+若 `adb devices` 为空，提示用户连接设备或启动模拟器后再试。
+
+## 步骤 2：确认参数
+
+若 `--package` 缺失，询问用户目标包名。
+
+若 `--output` 未指定，自动生成：`./reports/<包名末段>_<YYYYMMDD_HHMMSS>`
+
+确认后告知用户：
+> 开始对 `<package>` 进行 `<duration>` 性能采集，输出至 `<output_dir>`…
+
+## 步骤 3：执行采集（后台，不阻塞会话）
+
+在 `perf_auto_test/scripts/` 目录下**后台启动**采集命令，**不要**用长超时等待命令结束占用当前对话。
+
+启动后立刻向用户回报：
+- 包名、时长、设备 serial、输出目录
+- 进程是否已进入监控（读启动日志或 `status.json`）
+- 预计结束时间
+- 告知：测试在后台持续运行；可随时让我查进度；结束后说一声，我会打开报告并输出总结
+
+```bash
+python -m pat \
+  --package <package> \
+  --output <output_dir> \
+  --duration <duration> \
+  [--device <serial>] \
+  [--config <config_path>] \
+  [其他可选参数]
+```
+
+采集期间 `<output_dir>/status.json` 每 10 秒刷新一次心跳。查进度时读取该文件，关注 `running`、`elapsed_sec`、`processes`、`incidents_count`。
+
+**例外**：仅当用户明确要求「跑完再告诉我」或时长 ≤ 30s 的冒烟测试时，才可在前台等待结束。
+
+## 步骤 4：弹出报告 + 输出总结（测试结束后）
+
+用户说「跑完了」「看报告」「出总结」，或你确认 `status.json` 中 `running` 为 false 且 `report.json` 已生成时，再执行本步骤。**不要**在步骤 3 启动后自动阻塞等待。
+
+### 4.1 弹出网页报告
+
+Windows：
+
+```powershell
+Start-Process "<output_dir>\report.html"
+```
+
+### 4.2 读取数据
+
+读取 `<output_dir>/report.json`，提取以下字段：
+- `run`：时长、退出原因、设备信息
+- `processes[*]`：`stats.cpu_pct`（mean/p95/max）、`stats.mem_pss_mb`（mean/max）、`alerts`、`restart_count`
+- `incidents[]`：触发时间、进程名、类型、observed vs threshold
+- `lifecycle_events[]`：new / gone / restart 事件
+
+### 4.3 输出性能总结
+
+总结要**简短、有逻辑、有结论**，格式如下：
+
+---
+
+**性能测试总结 — `<package>`（`<duration>`）**
+
+**整体状态**：正常 / ⚠️ 有报警 / 🔴 异常（一句话说明）
+
+**进程概览**
+
+| 进程 | CPU均值 | CPU P95 | CPU峰值 | 占用算力 | 内存均值 | 内存峰值 | 报警 | 重启 |
+|---|---|---|---|---|---|---|---|---|
+
+**报警 & 异常事件**（无则省略此节）
+- 逐条列出：时间 — 进程 — 类型 — 观测值 vs 阈值
+
+**结论**
+一到两句话：是否存在性能问题、最需要关注的点是什么。
+
+*详细图表和 dump 文件见已弹出的 report.html*
+
+---
+
+> 总结不要罗列所有字段，不需要重复网页报告里的完整数据——只给出判断和关键数字。
+
+## 命令行直接调用参考
+
+以下命令在 `perf_auto_test/scripts/` 目录下执行。
+
+```bash
+# 基本用法
+python -m pat --package com.example.app --duration 5m --output ./reports/run01
+
+# 使用配置文件（推荐，阈值在 YAML 中管理）
+python -m pat --config config.example.yaml --package com.example.app --output ./reports/r1
+
+# 冒烟（30秒验证连通性）
+python -m pat --package com.android.settings --duration 30s --output ./reports/smoke
+```
+
+完整参数：`python -m pat --help`

@@ -138,6 +138,12 @@ def _flatten_yaml(data: Dict[str, Any]) -> Dict[str, Any]:
     if "cooldown_sec" in mem_thr:
         out["mem_cooldown_sec"] = mem_thr["cooldown_sec"]
 
+    cpu_cfg = data.get("cpu", {}) or {}
+    if "total_compute_k" in cpu_cfg:
+        out["cpu_total_compute_k"] = cpu_cfg["total_compute_k"]
+    if "cpu_total_compute_k" in data:
+        out["cpu_total_compute_k"] = data["cpu_total_compute_k"]
+
     dumps = data.get("dumps", {}) or {}
     if "enable_heap" in dumps:
         out["enable_heap_dumps"] = dumps["enable_heap"]
@@ -171,6 +177,7 @@ def build_config(args: argparse.Namespace, yaml_path: Optional[Path]) -> PerfCon
         "rescan_interval_sec": args.rescan_interval,
         "process_filter": _parse_csv_list(args.processes),
         "cpu_threshold_percent": args.cpu_threshold_percent,
+        "cpu_total_compute_k": args.cpu_total_compute_k,
         "cpu_sustain_sec": args.cpu_sustain_sec,
         "cpu_cooldown_sec": args.cpu_cooldown_sec,
         "mem_threshold_pss_mb": args.mem_threshold_pss_mb,
@@ -234,6 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Thresholds
     p.add_argument("--cpu-threshold-percent", type=float, default=None,
                    help="CPU%% trip value (default: 80)")
+    p.add_argument("--cpu-compute-k", type=float, default=None,
+                   dest="cpu_total_compute_k", metavar="K",
+                   help="Total CPU compute capacity in K units (default: 230)")
     p.add_argument("--cpu-sustain-sec", type=float, default=None,
                    help="Seconds CPU must stay above threshold to fire (default: 60)")
     p.add_argument("--cpu-cooldown-sec", type=float, default=None,

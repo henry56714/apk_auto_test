@@ -784,14 +784,34 @@ def _fmt_ts(ts: Optional[str], fmt: str = "%H:%M:%S") -> str:
     dt = _parse_ts(ts)
     if dt is None:
         return "—"
-    return dt.strftime(fmt)
+    return dt.astimezone().strftime(fmt)
 
 
 def _fmt_ts_ms(ts: Optional[str]) -> str:
     dt = _parse_ts(ts)
     if dt is None:
         return "—"
-    return dt.strftime("%H:%M:%S") + f".{dt.microsecond // 1000:03d}"
+    local = dt.astimezone()
+    return local.strftime("%H:%M:%S") + f".{local.microsecond // 1000:03d}"
+
+
+def _local_tz():
+    return datetime.now().astimezone().tzinfo
+
+
+def _ts_series_local_str(series: pd.Series) -> List[str]:
+    """Format UTC timestamps as local wall-clock strings for chart axes."""
+    if series.empty:
+        return []
+    local = series.dt.tz_convert(_local_tz())
+    return local.dt.strftime("%Y-%m-%d %H:%M:%S").tolist()
+
+
+def _ts_str_local(ts: Optional[str]) -> Optional[str]:
+    dt = _parse_ts(ts)
+    if dt is None:
+        return ts
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _rail_x(ts: Optional[str], t0: datetime, duration_sec: float, width: float = 1200.0) -> float:
@@ -1235,7 +1255,7 @@ def _build_timeline(result: dict) -> str:
         offset_sec = frac * duration_sec
         import datetime as _dt_mod
 
-        ts_label = (t0 + _dt_mod.timedelta(seconds=offset_sec)).strftime("%H:%M")
+        ts_label = (t0 + _dt_mod.timedelta(seconds=offset_sec)).astimezone().strftime("%H:%M")
         axis_labels.append(f"<span>{_e(ts_label)}</span>")
     axis_str = "".join(axis_labels)
 
@@ -1280,6 +1300,11 @@ def _build_process_tables(result: dict) -> str:
     cpu_interval = cfg.get("cpu_interval_sec", 1)
     mem_interval = cfg.get("mem_interval_sec", 5)
     cores = run.get("device", {}).get("cpu_cores", "?")
+    total_compute_k = cfg.get("cpu_total_compute_k", 230)
+    try:
+        total_compute_label = f"{float(total_compute_k):.0f} K"
+    except (TypeError, ValueError):
+        total_compute_label = "230 K"
 
     proc_count = len(processes)
     dur_str = _fmt_hms(duration_sec)
@@ -1330,9 +1355,16 @@ def _build_process_tables(result: dict) -> str:
     for p in processes:
         name = p.get("name", "?")
         s = (p.get("stats") or {}).get("cpu_pct") or {}
+        compute_k = (p.get("stats") or {}).get("cpu_compute_k")
+        if compute_k is None:
+            compute_cell = "—"
+        else:
+            compute_cell = f"{float(compute_k):.2f} K"
         if not s:
             cpu_rows.append(
-                f'<tr><td class="mono">{_e(name)}</td>' + '<td class="r">—</td>' * 6 + "</tr>"
+                f'<tr><td class="mono">{_e(name)}</td>'
+                + '<td class="r">—</td>' * 7
+                + "</tr>"
             )
             continue
         mx = s.get("max", 0)
@@ -1341,6 +1373,7 @@ def _build_process_tables(result: dict) -> str:
             <tr>
               <td class="mono">{_e(name)}</td>
               <td class="r">{s.get("mean", 0):.1f} %</td>
+              <td class="r">{_e(compute_cell)}</td>
               <td class="r">{s.get("p50", 0):.1f} %</td>
               <td class="r">{s.get("p90", 0):.1f} %</td>
               <td class="r">{s.get("p95", 0):.1f} %</td>
@@ -1406,7 +1439,7 @@ def _build_process_tables(result: dict) -> str:
 
     <div class="sub-title" style="margin: 28px 0 12px;">
       <span class="t">{_zh_en("CPU 统计", "CPU stats")}</span>
-      <span class="c">{_zh_en(f"单核归一化百分比 ({_e(cores)} 核满载 = {int(cores) * 100 if str(cores).isdigit() else "N×100"} %) · 阈值 {_e(cpu_thr_label)}", f"single-core normalised % · threshold {_e(cpu_thr_label)}")}</span>
+      <span class="c">{_zh_en(f"单核归一化百分比 ({_e(cores)} 核满载 = {int(cores) * 100 if str(cores).isdigit() else "N×100"} %) · 阈值 {_e(cpu_thr_label)} · 总算力 {_e(total_compute_label)} · 占用算力 = 总算力 × 均值% / (核数×100)", f"single-core normalised % · threshold {_e(cpu_thr_label)} · total compute {_e(total_compute_label)} · occupied = total × mean% / (cores×100)")}</span>
     </div>
     <div class="table-wrap">
       <div class="table-scroll">
@@ -1414,6 +1447,7 @@ def _build_process_tables(result: dict) -> str:
           <thead><tr>
             <th>{_zh_en("进程", "Process")}</th>
             <th class="r">{_zh_en("均值", "Mean")}</th>
+            <th class="r">{_zh_en("占用算力", "Occupied compute")}</th>
             <th class="r">p50</th>
             <th class="r">p90</th>
             <th class="r">p95</th>
@@ -1481,7 +1515,7 @@ def _build_charts(result: dict, output_dir: Path) -> str:
                 continue
             fig.add_trace(
                 go.Scattergl(
-                    x=sub["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist(),
+                    x=_ts_series_local_str(sub["timestamp"]),
                     y=sub["cpu_pct"].tolist(),
                     mode="lines",
                     name=name,
@@ -1511,7 +1545,7 @@ def _build_charts(result: dict, output_dir: Path) -> str:
                 continue
             fig.add_trace(
                 go.Scattergl(
-                    x=sub["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist(),
+                    x=_ts_series_local_str(sub["timestamp"]),
                     y=sub["pss_mb"].tolist(),
                     mode="lines",
                     name=name,
@@ -1537,7 +1571,7 @@ def _build_charts(result: dict, output_dir: Path) -> str:
 
     for inc in result.get("incidents", []):
         row = 1 if inc.get("type") == "cpu_threshold" else 2
-        x = inc.get("triggered_at")
+        x = _ts_str_local(inc.get("triggered_at"))
         obs = inc.get("observed", {})
         y = obs.get("value_at_trigger", 0)
         inc_id = inc.get("id", "")
@@ -1560,8 +1594,9 @@ def _build_charts(result: dict, output_dir: Path) -> str:
 
     for ev in result.get("lifecycle_events", []):
         if ev.get("event") == "restart":
+            lx = _ts_str_local(ev.get("timestamp"))
             fig.add_vline(
-                x=ev.get("timestamp"),
+                x=lx,
                 line_dash="dot",
                 line_color="#c2410c",
                 opacity=0.4,
@@ -1569,7 +1604,7 @@ def _build_charts(result: dict, output_dir: Path) -> str:
                 col=1,
             )
             fig.add_vline(
-                x=ev.get("timestamp"),
+                x=lx,
                 line_dash="dot",
                 line_color="#c2410c",
                 opacity=0.4,
@@ -1580,7 +1615,7 @@ def _build_charts(result: dict, output_dir: Path) -> str:
     for bm in result.get("bookmarks", []):
         for r in (1, 2):
             fig.add_vline(
-                x=bm.get("timestamp"),
+                x=_ts_str_local(bm.get("timestamp")),
                 line_dash="solid",
                 line_color="#1d4ed8",
                 opacity=0.5,
@@ -1635,7 +1670,7 @@ def _build_incident_detail_cpu(inc: dict) -> str:
     inc_id = inc.get("id", "?")
     process = inc.get("process", "?")
     pid = inc.get("pid", "?")
-    triggered = _fmt_ts(inc.get("triggered_at"), "%Y-%m-%d %H:%M:%S UTC")
+    triggered = _fmt_ts(inc.get("triggered_at"), "%Y-%m-%d %H:%M:%S")
     obs = inc.get("observed", {})
     thr = inc.get("threshold", {})
     ev = inc.get("evidence", {})
@@ -1745,7 +1780,7 @@ def _build_incident_detail_mem(inc: dict) -> str:
     inc_id = inc.get("id", "?")
     process = inc.get("process", "?")
     pid = inc.get("pid", "?")
-    triggered = _fmt_ts(inc.get("triggered_at"), "%Y-%m-%d %H:%M:%S UTC")
+    triggered = _fmt_ts(inc.get("triggered_at"), "%Y-%m-%d %H:%M:%S")
     obs = inc.get("observed", {})
     thr = inc.get("threshold", {})
     ev = inc.get("evidence", {})
@@ -2144,7 +2179,7 @@ def _build_popovers(result: dict) -> str:
         inc_type = inc.get("type", "")
         process = inc.get("process", "?")
         pid = inc.get("pid", "?")
-        triggered = _fmt_ts(inc.get("triggered_at"), "%H:%M:%S UTC")
+        triggered = _fmt_ts(inc.get("triggered_at"), "%H:%M:%S")
         obs = inc.get("observed", {})
         peak = obs.get("peak", 0)
         dur = obs.get("duration_above_sec", 0)

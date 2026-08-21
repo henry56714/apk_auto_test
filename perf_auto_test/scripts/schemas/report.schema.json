@@ -87,8 +87,9 @@
           "type": "object",
           "required": ["cpu_pct", "mem_pss_mb"],
           "properties": {
-            "cpu_pct":     { "$ref": "#/definitions/stats" },
-            "mem_pss_mb":  { "$ref": "#/definitions/stats" }
+            "cpu_pct":        { "$ref": "#/definitions/stats" },
+            "cpu_compute_k":  { "type": ["number", "null"] },
+            "mem_pss_mb":     { "$ref": "#/definitions/stats" }
           }
         },
         "alerts": {
